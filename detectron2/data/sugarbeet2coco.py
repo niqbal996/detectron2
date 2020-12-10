@@ -11,6 +11,8 @@ from PIL import Image
 from os.path import join, split, basename, splitext
 from os import makedirs, walk
 from scipy.spatial import distance
+from skimage.measure import regionprops, label
+# from matplotlib import patches
 from glob import glob
 from pycococreatortools import pycococreatortools
 
@@ -101,7 +103,7 @@ class Sugarbeet2Coco:
         image_id = 1
         segmentation_id = 1
         classes = [x['supercategory'] for x in self.CATEGORIES]
-
+        print('[INFO] Generating annotation .json file from instance masks . . .')
         for root, _, files in walk(split(self.rgb_dir)[0]):
             image_files = self.filter_for_png(root, files)
 
@@ -295,6 +297,49 @@ class Sugarbeet2Coco:
                 else:
                     print('[INFO] No classes found in the current picture')
 
+    def generate_instances2(self):
+        """
+        Takes the semantic segmentation masks and converts them into instance masks
+        for each class and image
+        Returns: None, Generates instance masks for each segmentation mask in "lbl_coco" folder
+        """
+        for image_path, count in zip(self.list_labels, range(len(self.list_labels))):
+            image = cv2.imread(image_path, cv2.COLOR_BGR2GRAY)
+            rgb_path = join(split(split(image_path)[0])[0], 'img', split(image_path)[1])
+            # rgb_image = cv2.imread(rgb_path)
+            color = (0, 0, 0)
+            class_image = np.zeros_like(image)
+            print('[INFO] Processed {} percent of the data \r'.format(round((count / len(self.list_labels)) * 100), 2),
+                  flush=True)
+            for class_label in self.classes:
+                if class_label == 'crop':
+                    class_image[image == 255] = image[image == 255]
+                    # color = (0, 255, 0)
+                else:
+                    class_image[image == 128] = image[image == 128]
+                    # color = (0, 0, 255)
+                if np.count_nonzero(class_image) > 0:
+                    contours, _ = cv2.findContours(class_image, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+                    for region, instance in zip(regionprops(label(class_image)),
+                                                range(len(regionprops(label(class_image))))):
+                        rect = region.bbox
+                        # patch = patches.Rectangle((rect[1], rect[0]), rect[3] - rect[1], rect[2] - rect[0], linewidth=1,
+                        #                           edgecolor='r', facecolor='none')
+                        instance_mask = np.zeros(image.shape, dtype=np.uint8)
+                        x, y, w, h = rect[1], rect[0], rect[3] - rect[1], rect[2] - rect[0]
+                        instance_mask[y:y + h, x:x + w] = image[y:y + h, x:x + w]
+                        dest = join(split(split(image_path)[0])[0],
+                                    'lbl_coco',
+                                    (basename(image_path)[:-4]+'_'+class_label+'_'+str(instance)+'.png'))
+                        cv2.imwrite(dest, instance_mask)
+                        # print('[INFO] Split the segmentation mask into instance: \n {}'.format(dest))
+                        # cv2.rectangle(rgb_image, (x, y), (x + w, y + h), color, 2)
+                        # cv2.putText(rgb_image, class_label, (x + w + 10, y + h), 0, 0.3, color)
+                    class_image = np.zeros_like(image)
+
+            else:
+                    print('[INFO] No classes found in the current picture')
+
     def visualize_samples(self, number):
         from detectron2.utils.visualizer import Visualizer
         from detectron2.data import MetadataCatalog
@@ -326,9 +371,9 @@ class Sugarbeet2Coco:
 
 if __name__ == '__main__':
     coco_converter = Sugarbeet2Coco(data_split='valid')
-    coco_converter.generate_instances()
+    coco_converter.generate_instances2()
     coco_converter.generate_coco_annotations()
-    # coco_converter.visualize_samples(5)
+    # coco_converter.visualize_samples(10)
 
 
 
