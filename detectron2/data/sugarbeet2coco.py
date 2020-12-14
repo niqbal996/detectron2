@@ -346,6 +346,56 @@ class Sugarbeet2Coco:
                 else:
                     print('[INFO] No classes found in the current picture')
 
+    def get_iou(self, bb1, bb2):
+        """
+        Calculate the Intersection over Union (IoU) of two bounding boxes.
+
+        Parameters
+        ----------
+        bb1 : dict
+            Keys: {'x1', 'x2', 'y1', 'y2'}
+            The (x1, y1) position is at the top left corner,
+            the (x2, y2) position is at the bottom right corner
+        bb2 : dict
+            Keys: {'x1', 'x2', 'y1', 'y2'}
+            The (x, y) position is at the top left corner,
+            the (x2, y2) position is at the bottom right corner
+
+        Returns
+        -------
+        float
+            in [0, 1]
+        """
+        assert bb1[0] < bb1[2]
+        assert bb1[1] < bb1[3]
+        assert bb2[0] < bb2[2]
+        assert bb2[1] < bb2[3]
+
+        # determine the coordinates of the intersection rectangle
+        x_left = max(bb1[0], bb2[0])
+        y_top = max(bb1[1], bb2[1])
+        x_right = min(bb1[2], bb2[2])
+        y_bottom = min(bb1[3], bb2[3])
+
+        if x_right < x_left or y_bottom < y_top:
+            return 0.0
+
+        # The intersection of two axis-aligned bounding boxes is always an
+        # axis-aligned bounding box
+        intersection_area = (x_right - x_left) * (y_bottom - y_top)
+
+        # compute the area of both AABBs
+        bb1_area = (bb1[2] - bb1[0]) * (bb1[3] - bb1[1])
+        bb2_area = (bb2[2] - bb2[0]) * (bb2[3] - bb2[1])
+
+        # compute the intersection over union by taking the intersection
+        # area and dividing it by the sum of prediction + ground-truth
+        # areas - the interesection area
+        iou = intersection_area / float(bb1_area + bb2_area - intersection_area)
+        assert iou >= 0.0
+        assert iou <= 1.0
+        return iou
+
     def generate_instances2(self):
         """
         Takes the semantic segmentation masks and converts them into instance masks
@@ -355,8 +405,8 @@ class Sugarbeet2Coco:
         for image_path, count in zip(self.list_labels, range(len(self.list_labels))):
             image = cv2.imread(image_path, cv2.COLOR_BGR2GRAY)
             rgb_path = join(split(split(image_path)[0])[0], 'img', split(image_path)[1])
-            rgb_image = cv2.imread(rgb_path)
-            color = (0, 255, 0)
+            # rgb_image = cv2.imread(rgb_path)
+            # color = (0, 255, 0)
             class_image = np.zeros_like(image)
             print('[INFO] Processed {} percent of the data \r'.format(round((count / len(self.list_labels)) * 100), 2),
                   flush=False)
@@ -384,10 +434,10 @@ class Sugarbeet2Coco:
                             for box_index_2 in range(boxes.shape[0]):
                                 target_box = boxes[box_index_2, 0:4]
                                 min_distance = self.rect_min_distance(curr_box, target_box)
-                                overlap = self.box_overlap(curr_box, target_box)
+                                iou = self.get_iou(curr_box, target_box)
                                 # if min_distance < 1000:
                                 #     distances.append(int(min_distance))
-                                if min_distance < 50 and min_distance != 0:
+                                if (min_distance < 50 and min_distance != 0) or (0 < iou < 1):
                                     boxes[box_index_2, 4] = 1
                                     curr_box = self.combine_boxes(curr_box, target_box)
                                     boxes[box_index_1, 0:4] = curr_box
@@ -403,15 +453,15 @@ class Sugarbeet2Coco:
                             dest = join(split(split(image_path)[0])[0],
                                         'lbl_coco',
                                         (basename(image_path)[:-4]+'_'+class_label+'_'+str(instance)+'.png'))
-                            # cv2.imwrite(dest, instance_mask)
+                            cv2.imwrite(dest, instance_mask)
                             # print('[INFO] Split the segmentation mask into instance: \n {}'.format(dest))
                             # if len(regions) > 10:
-                            cv2.rectangle(rgb_image, (x, y), (x + w, y + h), color, 2)
-                            cv2.putText(rgb_image, class_label, (x + w + 10, y + h), 0, 0.3, color)
+                            # cv2.rectangle(rgb_image, (x, y), (x + w, y + h), color, 2)
+                            # cv2.putText(rgb_image, class_label, (x + w + 10, y + h), 0, 0.3, color)
                             # cv2.putText(rgb_image, '{}_{}_{}_{}'.format(rect[0], rect[1], rect[2], rect[3]), (x + w + 10, y + h), 0, 0.3, color)
-                    cv2.imshow('rgb', rgb_image)
-                    if cv2.waitKey(0) & 0xFF == ord('q'):
-                        continue
+                    # cv2.imshow('rgb', rgb_image)
+                    # if cv2.waitKey(0) & 0xFF == ord('q'):
+                    #     continue
                     class_image = np.zeros_like(image)
             else:
                 pass
