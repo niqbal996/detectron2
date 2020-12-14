@@ -10,7 +10,7 @@ from PIL import Image
 
 from os.path import join, split, basename, splitext
 from os import makedirs, walk
-from scipy.spatial import distance
+from scipy.spatial.distance import euclidean as dist
 from skimage.measure import regionprops, label
 # from matplotlib import patches
 from glob import glob
@@ -150,10 +150,7 @@ class Sugarbeet2Coco:
         top_left_x, top_left_y, width, height = cv2.boundingRect(contour)
         return [top_left_x, top_left_y, top_left_x + width, top_left_y + height]
 
-    def dist(self, p1, p2):
-        distance.euclidean(p1, p2)
-
-    def rect_distance(self, contour1, contour2):
+    def contour_distance(self, contour1, contour2):
         """
         Calculates the minimum distance between two given contours
         Args:
@@ -191,8 +188,53 @@ class Sugarbeet2Coco:
         else:  # rectangles intersect
             return 0.
 
+    def rect_min_distance(self, box1, box2):
+        """
+        Calculates the minimum distance between two given contours
+        Args:
+            box1:
+            box2:
+        Returns:
+            Returns minimum distance between box1 and box2
+        """
+
+        x1, y1, x1b, y1b = box1
+        x2, y2, x2b, y2b = box2
+        left = x2b < x1
+        right = x1b < x2
+        bottom = y2b < y1
+        top = y1b < y2
+        if top and left:
+            return dist((x1, y1b), (x2b, y2))
+        elif left and bottom:
+            return dist((x1, y1), (x2b, y2b))
+        elif bottom and right:
+            return dist((x1b, y1), (x2, y2b))
+        elif right and top:
+            return dist((x1b, y1b), (x2, y2))
+        elif left:
+            return x1 - x2b
+        elif right:
+            return x2 - x1b
+        elif bottom:
+            x = y1 - y2b
+            return y1 - y2b
+        elif top:
+            return y2 - y1b
+        else:  # rectangles intersect
+            return 0.
+
+    def combine_boxes(self, box1, box2):
+        x1, y1, x1b, y1b = box1
+        x2, y2, x2b, y2b = box2
+        x = min(x1, x2)
+        y = min(y1, y2)
+        xb = max(x1b, x2b)
+        yb = max(y1b, y2b)
+        box = [x, y, xb, yb]
+        return box
+
     # https://www.geeksforgeeks.org/find-two-rectangles-overlap/
-    @staticmethod
     def is_overlap(self, contour1, contour2):
         """
         Checks the two contours and returns True if they are overlapping
@@ -210,6 +252,13 @@ class Sugarbeet2Coco:
         else:
             return True
 
+    def box_overlap(self, box1, box2):
+        # If one rectangle is on left side of other
+        if (box1[0] >= box2[2]) or (box1[2] <= box2[0]) or (box1[3] <= box2[1]) or (box1[1] >= box2[3]):
+            return False
+        else:
+            return True
+        
     def check_contours(self, contours):
         """
         Args:
@@ -306,11 +355,11 @@ class Sugarbeet2Coco:
         for image_path, count in zip(self.list_labels, range(len(self.list_labels))):
             image = cv2.imread(image_path, cv2.COLOR_BGR2GRAY)
             rgb_path = join(split(split(image_path)[0])[0], 'img', split(image_path)[1])
-            # rgb_image = cv2.imread(rgb_path)
-            color = (0, 0, 0)
+            rgb_image = cv2.imread(rgb_path)
+            color = (0, 255, 0)
             class_image = np.zeros_like(image)
             print('[INFO] Processed {} percent of the data \r'.format(round((count / len(self.list_labels)) * 100), 2),
-                  flush=True)
+                  flush=False)
             for class_label in self.classes:
                 if class_label == 'crop':
                     class_image[image == 255] = image[image == 255]
@@ -319,26 +368,54 @@ class Sugarbeet2Coco:
                     class_image[image == 128] = image[image == 128]
                     # color = (0, 0, 255)
                 if np.count_nonzero(class_image) > 0:
-                    contours, _ = cv2.findContours(class_image, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-                    for region, instance in zip(regionprops(label(class_image)),
-                                                range(len(regionprops(label(class_image))))):
-                        rect = region.bbox
-                        # patch = patches.Rectangle((rect[1], rect[0]), rect[3] - rect[1], rect[2] - rect[0], linewidth=1,
-                        #                           edgecolor='r', facecolor='none')
-                        instance_mask = np.zeros(image.shape, dtype=np.uint8)
-                        x, y, w, h = rect[1], rect[0], rect[3] - rect[1], rect[2] - rect[0]
-                        instance_mask[y:y + h, x:x + w] = image[y:y + h, x:x + w]
-                        dest = join(split(split(image_path)[0])[0],
-                                    'lbl_coco',
-                                    (basename(image_path)[:-4]+'_'+class_label+'_'+str(instance)+'.png'))
-                        cv2.imwrite(dest, instance_mask)
-                        # print('[INFO] Split the segmentation mask into instance: \n {}'.format(dest))
-                        # cv2.rectangle(rgb_image, (x, y), (x + w, y + h), color, 2)
-                        # cv2.putText(rgb_image, class_label, (x + w + 10, y + h), 0, 0.3, color)
+                    # contours, _ = cv2.findContours(class_image, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+                    regions = regionprops(label(class_image))
+                    centroids = np.zeros((len(regions), 3), dtype=np.uint16)
+                    boxes = np.zeros((len(regions), 6), dtype=np.uint16)
+                    for region, index in zip(regions, range(len(regions))):
+                        centroids[index, 0:2] = region.centroid
+                        boxes[index, 0:4] = region.bbox
+                        boxes[index, 5] = region.area
+                    # distances = []
+                    for box_index_1 in range(boxes.shape[0]):
+                        curr_box = boxes[box_index_1, 0:4]
+                        if boxes[box_index_1, 4] == 0:
+                            # boxes[box_index_1, 4] = match
+                            for box_index_2 in range(boxes.shape[0]):
+                                target_box = boxes[box_index_2, 0:4]
+                                min_distance = self.rect_min_distance(curr_box, target_box)
+                                overlap = self.box_overlap(curr_box, target_box)
+                                # if min_distance < 1000:
+                                #     distances.append(int(min_distance))
+                                if min_distance < 50 and min_distance != 0:
+                                    boxes[box_index_2, 4] = 1
+                                    curr_box = self.combine_boxes(curr_box, target_box)
+                                    boxes[box_index_1, 0:4] = curr_box
+                                    # x, y, w, h = curr_box[1], curr_box[0], curr_box[3] - curr_box[1], curr_box[2] - curr_box[0]
+                                    # cv2.rectangle(rgb_image, (x, y), (x + w, y + h), (0, 0, 255), 2)
+                    # print(distances)
+                    for box, instance in zip(range(len(regions)), range(boxes.shape[0])):
+                        if boxes[box, 4] == 0:
+                            rect = boxes[box, 0:4]
+                            instance_mask = np.zeros(image.shape, dtype=np.uint8)
+                            x, y, w, h = rect[1], rect[0], rect[3] - rect[1], rect[2] - rect[0]
+                            instance_mask[y:y + h, x:x + w] = image[y:y + h, x:x + w]
+                            dest = join(split(split(image_path)[0])[0],
+                                        'lbl_coco',
+                                        (basename(image_path)[:-4]+'_'+class_label+'_'+str(instance)+'.png'))
+                            # cv2.imwrite(dest, instance_mask)
+                            # print('[INFO] Split the segmentation mask into instance: \n {}'.format(dest))
+                            # if len(regions) > 10:
+                            cv2.rectangle(rgb_image, (x, y), (x + w, y + h), color, 2)
+                            cv2.putText(rgb_image, class_label, (x + w + 10, y + h), 0, 0.3, color)
+                            # cv2.putText(rgb_image, '{}_{}_{}_{}'.format(rect[0], rect[1], rect[2], rect[3]), (x + w + 10, y + h), 0, 0.3, color)
+                    cv2.imshow('rgb', rgb_image)
+                    if cv2.waitKey(0) & 0xFF == ord('q'):
+                        continue
                     class_image = np.zeros_like(image)
-
             else:
-                    print('[INFO] No classes found in the current picture')
+                pass
+                # print('[INFO] No classes found in the current picture')
 
     def visualize_samples(self, number):
         from detectron2.utils.visualizer import Visualizer
