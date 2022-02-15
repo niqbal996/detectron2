@@ -5,18 +5,19 @@ import torch
 from torch import device
 from torch.nn import functional as F
 
-from detectron2.utils.env import TORCH_VERSION
+from detectron2.layers.wrappers import shapes_to_tensor
 
 
 class ImageList(object):
     """
     Structure that holds a list of images (of possibly
     varying sizes) as a single tensor.
-    This works by padding the images to the same size,
-    and storing in a field the original sizes of each image
+    This works by padding the images to the same size.
+    The original sizes of each image is stored in `image_sizes`.
 
     Attributes:
-        image_sizes (list[tuple[int, int]]): each tuple is (h, w)
+        image_sizes (list[tuple[int, int]]): each tuple is (h, w).
+            During tracing, it becomes list[Tensor] instead.
     """
 
     def __init__(self, tensor: torch.Tensor, image_sizes: List[Tuple[int, int]]):
@@ -60,7 +61,7 @@ class ImageList(object):
     ) -> "ImageList":
         """
         Args:
-            tensors: a tuple or list of `torch.Tensors`, each of shape (Hi, Wi) or
+            tensors: a tuple or list of `torch.Tensor`, each of shape (Hi, Wi) or
                 (C_1, ..., C_K, Hi, Wi) where K >= 1. The Tensors will be padded
                 to the same shape with `pad_value`.
             size_divisibility (int): If `size_divisibility > 0`, add padding to ensure
@@ -75,43 +76,23 @@ class ImageList(object):
         assert isinstance(tensors, (tuple, list))
         for t in tensors:
             assert isinstance(t, torch.Tensor), type(t)
-            assert t.shape[1:-2] == tensors[0].shape[1:-2], t.shape
-
-        # Magic code below that handles dynamic shapes for both scripting and tracing ...
+            assert t.shape[:-2] == tensors[0].shape[:-2], t.shape
 
         image_sizes = [(im.shape[-2], im.shape[-1]) for im in tensors]
+        image_sizes_tensor = [shapes_to_tensor(x) for x in image_sizes]
+        max_size = torch.stack(image_sizes_tensor).max(0).values
 
+        if size_divisibility > 1:
+            stride = size_divisibility
+            # the last two dims are H,W, both subject to divisibility requirement
+            max_size = (max_size + (stride - 1)).div(stride, rounding_mode="floor") * stride
+
+        # handle weirdness of scripting and tracing ...
         if torch.jit.is_scripting():
-            max_size = torch.stack([torch.as_tensor(x) for x in image_sizes]).max(0).values
-            if size_divisibility > 1:
-                stride = size_divisibility
-                # the last two dims are H,W, both subject to divisibility requirement
-                max_size = (max_size + (stride - 1)) // stride * stride
-
             max_size: List[int] = max_size.to(dtype=torch.long).tolist()
         else:
-            # https://github.com/pytorch/pytorch/issues/42448
-            if TORCH_VERSION >= (1, 7) and torch.jit.is_tracing():
-                # In tracing mode, x.shape[i] is a scalar Tensor, and should not be converted
-                # to int: this will cause the traced graph to have hard-coded shapes.
-                # Instead we convert each shape to a vector with a stack()
-                image_sizes = [torch.stack(x) for x in image_sizes]
-
-                # maximum (H, W) for the last two dims
-                # find the maximum in a tracable way
-                max_size = torch.stack(image_sizes).max(0).values
-            else:
-                # Original eager logic here -- not scripting, not tracing:
-                # (can be unified with scripting after
-                # https://github.com/pytorch/pytorch/issues/47379)
-                max_size = torch.as_tensor(
-                    [max(s) for s in zip(*[img.shape[-2:] for img in tensors])]
-                )
-
-            if size_divisibility > 1:
-                stride = size_divisibility
-                # the last two dims are H,W, both subject to divisibility requirement
-                max_size = (max_size + (stride - 1)) // stride * stride
+            if torch.jit.is_tracing():
+                image_sizes = image_sizes_tensor
 
         if len(tensors) == 1:
             # This seems slightly (2%) faster.

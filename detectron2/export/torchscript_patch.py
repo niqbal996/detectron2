@@ -1,6 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 
-import importlib.util
 import os
 import sys
 import tempfile
@@ -12,7 +11,8 @@ from torch import nn
 
 # need some explicit imports due to https://github.com/pytorch/pytorch/issues/38964
 import detectron2  # noqa F401
-from detectron2.structures import Instances
+from detectron2.structures import Boxes, Instances
+from detectron2.utils.env import _import_file
 
 _counter = 0
 
@@ -27,21 +27,9 @@ def _clear_jit_cache():
 
 def _add_instances_conversion_methods(newInstances):
     """
-    Add to_instances/from_instances methods to the scripted Instances class.
+    Add from_instances methods to the scripted Instances class.
     """
     cls_name = newInstances.__name__
-
-    @torch.jit.unused
-    def to_instances(self):
-        """
-        Convert scripted Instances to original Instances
-        """
-        ret = Instances(self.image_size)
-        for name in self._field_names:
-            val = getattr(self, "_" + name, None)
-            if val is not None:
-                ret.set(name, val)
-        return ret
 
     @torch.jit.unused
     def from_instances(instances: Instances):
@@ -56,7 +44,6 @@ def _add_instances_conversion_methods(newInstances):
             setattr(ret, name, deepcopy(val))
         return ret
 
-    newInstances.to_instances = to_instances
     newInstances.from_instances = from_instances
 
 
@@ -65,7 +52,7 @@ def patch_instances(fields):
     """
     A contextmanager, under which the Instances class in detectron2 is replaced
     by a statically-typed scriptable class, defined by `fields`.
-    See more in `export_torchscript_with_instances`.
+    See more in `scripting_with_instances`.
     """
 
     with tempfile.TemporaryDirectory(prefix="detectron2") as dir, tempfile.NamedTemporaryFile(
@@ -126,10 +113,11 @@ def _gen_instance_class(fields):
     cls_name = "ScriptedInstances{}".format(_counter)
 
     field_names = tuple(x.name for x in fields)
+    extra_args = ", ".join([f"{f.name}: Optional[{f.annotation}] = None" for f in fields])
     lines.append(
         f"""
 class {cls_name}:
-    def __init__(self, image_size: Tuple[int, int]):
+    def __init__(self, image_size: Tuple[int, int], {extra_args}):
         self.image_size = image_size
         self._field_names = {field_names}
 """
@@ -137,7 +125,7 @@ class {cls_name}:
 
     for f in fields:
         lines.append(
-            indent(2, f"self._{f.name} = torch.jit.annotate(Optional[{f.annotation}], None)")
+            indent(2, f"self._{f.name} = torch.jit.annotate(Optional[{f.annotation}], {f.name})")
         )
 
     for f in fields:
@@ -148,7 +136,7 @@ class {cls_name}:
         # has to use a local for type refinement
         # https://pytorch.org/docs/stable/jit_language_reference.html#optional-type-refinement
         t = self._{f.name}
-        assert t is not None
+        assert t is not None, "{f.name} is None and cannot be accessed!"
         return t
 
     @{f.name}.setter
@@ -197,10 +185,11 @@ class {cls_name}:
     )
 
     # support method `to`
+    none_args = ", None" * len(fields)
     lines.append(
         f"""
     def to(self, device: torch.device) -> "{cls_name}":
-        ret = {cls_name}(self.image_size)
+        ret = {cls_name}(self.image_size{none_args})
 """
     )
     for f in fields:
@@ -223,10 +212,11 @@ class {cls_name}:
     )
 
     # support method `getitem`
+    none_args = ", None" * len(fields)
     lines.append(
         f"""
     def __getitem__(self, item) -> "{cls_name}":
-        ret = {cls_name}(self.image_size)
+        ret = {cls_name}(self.image_size{none_args})
 """
     )
     for f in fields:
@@ -241,6 +231,58 @@ class {cls_name}:
         """
         return ret
 """
+    )
+
+    # support method `cat`
+    # this version does not contain checks that all instances have same size and fields
+    none_args = ", None" * len(fields)
+    lines.append(
+        f"""
+    def cat(self, instances: List["{cls_name}"]) -> "{cls_name}":
+        ret = {cls_name}(self.image_size{none_args})
+"""
+    )
+    for f in fields:
+        lines.append(
+            f"""
+        t = self._{f.name}
+        if t is not None:
+            values: List[{f.annotation}] = [x.{f.name} for x in instances]
+            if torch.jit.isinstance(t, torch.Tensor):
+                ret._{f.name} = torch.cat(values, dim=0)
+            else:
+                ret._{f.name} = t.cat(values)
+"""
+        )
+    lines.append(
+        """
+        return ret"""
+    )
+
+    # support method `get_fields()`
+    lines.append(
+        """
+    def get_fields(self) -> Dict[str, Tensor]:
+        ret = {}
+    """
+    )
+    for f in fields:
+        if f.type_ == Boxes:
+            stmt = "t.tensor"
+        elif f.type_ == torch.Tensor:
+            stmt = "t"
+        else:
+            stmt = f'assert False, "unsupported type {str(f.type_)}"'
+        lines.append(
+            f"""
+        t = self._{f.name}
+        if t is not None:
+            ret["{f.name}"] = {stmt}
+        """
+        )
+    lines.append(
+        """
+        return ret"""
     )
     return cls_name, os.linesep.join(lines)
 
@@ -265,17 +307,11 @@ from detectron2.structures import Boxes, Instances
 
 
 def _import(path):
-    # https://docs.python.org/3/library/importlib.html#importing-a-source-file-directly
-    spec = importlib.util.spec_from_file_location(
-        "{}{}".format(sys.modules[__name__].__name__, _counter), path
+    return _import_file(
+        "{}{}".format(sys.modules[__name__].__name__, _counter), path, make_importable=True
     )
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module.__name__] = module
-    spec.loader.exec_module(module)
-    return module
 
 
-# TODO: this is a private utility. Should be made more useful through a model export api.
 @contextmanager
 def patch_builtin_len(modules=()):
     """
@@ -295,6 +331,7 @@ def patch_builtin_len(modules=()):
         MODULES = [
             "detectron2.modeling.roi_heads.fast_rcnn",
             "detectron2.modeling.roi_heads.mask_head",
+            "detectron2.modeling.roi_heads.keypoint_head",
         ] + list(modules)
         ctxs = [stack.enter_context(mock.patch(mod + ".len")) for mod in MODULES]
         for m in ctxs:
@@ -335,3 +372,35 @@ def patch_nonscriptable_classes():
         return ret
 
     FPN.__prepare_scriptable__ = prepare_fpn
+
+    # Annotate some attributes to be constants for the purpose of scripting,
+    # even though they are not constants in eager mode.
+    from detectron2.modeling.roi_heads import StandardROIHeads
+
+    if hasattr(StandardROIHeads, "__annotations__"):
+        # copy first to avoid editing annotations of base class
+        StandardROIHeads.__annotations__ = deepcopy(StandardROIHeads.__annotations__)
+        StandardROIHeads.__annotations__["mask_on"] = torch.jit.Final[bool]
+        StandardROIHeads.__annotations__["keypoint_on"] = torch.jit.Final[bool]
+
+
+# These patches are not supposed to have side-effects.
+patch_nonscriptable_classes()
+
+
+@contextmanager
+def freeze_training_mode(model):
+    """
+    A context manager that annotates the "training" attribute of every submodule
+    to constant, so that the training codepath in these modules can be
+    meta-compiled away. Upon exiting, the annotations are reverted.
+    """
+    classes = {type(x) for x in model.modules()}
+    # __constants__ is the old way to annotate constants and not compatible
+    # with __annotations__ .
+    classes = {x for x in classes if not hasattr(x, "__constants__")}
+    for cls in classes:
+        cls.__annotations__["training"] = torch.jit.Final[bool]
+    yield
+    for cls in classes:
+        cls.__annotations__["training"] = bool
