@@ -5,6 +5,7 @@ import os
 from typing import Dict, List, Tuple
 import torch
 from torch import Tensor, nn
+import cv2
 
 import detectron2.data.transforms as T
 from detectron2.checkpoint import DetectionCheckpointer
@@ -19,6 +20,12 @@ from detectron2.structures import Boxes
 from detectron2.utils.env import TORCH_VERSION
 from detectron2.utils.file_io import PathManager
 from detectron2.utils.logger import setup_logger
+from detectron2.engine import DefaultPredictor
+from detectron2.config import get_cfg
+from detectron2.utils.visualizer import Visualizer
+from detectron2.data import MetadataCatalog
+from detectron2.data.catalog import DatasetCatalog
+from detectron2.evaluation import COCOEvaluator
 
 
 def setup_cfg(args):
@@ -119,12 +126,22 @@ def export_tracing(torch_model, inputs):
 
     if args.format == "torchscript":
         ts_model = torch.jit.trace(traceable_model, (image,))
-        with PathManager.open(os.path.join(args.output, "model.ts"), "wb") as f:
+        with PathManager.open(os.path.join(args.output, "model.pt"), "wb") as f:
             torch.jit.save(ts_model, f)
         dump_torchscript_IR(ts_model, args.output)
     elif args.format == "onnx":
         with PathManager.open(os.path.join(args.output, "model.onnx"), "wb") as f:
-            torch.onnx.export(traceable_model, (image,), f, opset_version=11)
+            torch.onnx.export(traceable_model, (image,), f,
+                              # verbose=True,
+                              opset_version=11,
+                              # training=torch.onnx.TrainingMode.EVAL,
+                              # do_constant_folding=True,
+                              # input_names=['images'],
+                              # output_names=['output'],
+                              # dynamic_axes={'images': {0: 'batch', 2: 'height', 3: 'width'},  # shape(1,3,640,640)
+                              #               'output': {0: 'batch', 1: 'anchors'}  # shape(1,25200,85)
+                              #               }
+                              )
     logger.info("Inputs schema: " + str(traceable_model.inputs_schema))
     logger.info("Outputs schema: " + str(traceable_model.outputs_schema))
 
@@ -208,6 +225,26 @@ if __name__ == "__main__":
     torch_model = build_model(cfg)
     DetectionCheckpointer(torch_model).resume_or_load(cfg.MODEL.WEIGHTS)
     torch_model.eval()
+
+    from detectron2.data.datasets import register_coco_instances
+
+    register_coco_instances("maize_valid", {},
+                            "/media/naeem/T7/datasets/maize_data_coco/annotations/instances_val.json",
+                            "/media/naeem/T7/datasets/maize_data_coco")
+
+    predictor = DefaultPredictor(cfg)
+
+    dataset_dicts = DatasetCatalog.get("maize_valid")
+    for data in dataset_dicts:
+        image = cv2.imread(data['file_name'])
+        outputs = predictor(image)
+        v = Visualizer(image[:, :, ::-1], MetadataCatalog.get(cfg.DATASETS.TRAIN[0]), scale=1.2)
+        out = v.draw_instance_predictions(outputs["instances"].to("cpu"))
+        # if len(outputs['instances']) != 0:
+        boxes = outputs["instances"]._fields['pred_boxes'].to("cpu").tensor.numpy()[0]
+        out = v.draw_box(boxes)
+        cv2.imshow('fig', out.get_image())
+        cv2.waitKey()
 
     # get sample data
     sample_inputs = get_sample_inputs(args)
