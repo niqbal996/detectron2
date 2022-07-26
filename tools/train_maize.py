@@ -9,7 +9,7 @@ from detectron2.utils.logger import setup_logger
 setup_logger()
 # import some common libraries
 import numpy as np
-# import cv2
+import cv2
 import os
 import random
 # import some common detectron2 utilities
@@ -30,14 +30,14 @@ register_coco_instances("maize_valid", {},
                         "/media/naeem/T7/datasets/maize_data_coco/annotations/instances_val.json",
                         "/media/naeem/T7/datasets/maize_data_coco")
 # model = 'retinanet_R_101_FPN_3x.yaml'
-# model = 'faster_rcnn_R_50_FPN_1x.yaml'
+model = 'faster_rcnn_R_50_FPN_1x.yaml'
 # model = 'retinanet_R_50_FPN_1x.yaml'
 
 #visualize training data
 my_dataset_train_metadata = MetadataCatalog.get("maize_train")
 dataset_dicts = DatasetCatalog.get("maize_valid")
-import random
-from detectron2.utils.visualizer import Visualizer
+# import random
+# from detectron2.utils.visualizer import Visualizer
 
 cfg = get_cfg()
 cfg.merge_from_file(model_zoo.get_config_file("../configs/COCO-Detection/{}".format(model)))
@@ -74,3 +74,4 @@ os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
 trainer = CocoTrainer(cfg)
 trainer.resume_or_load(resume=False)
 trainer.train()
+trainer.build_evaluator(cfg, 'maize_valid', output_folder='/home/naeem/git/detectron2/output')
