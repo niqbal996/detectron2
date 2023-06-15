@@ -41,7 +41,6 @@ model_ts*.txt
 
 # editor settings
 .idea
-.vscode
 _darcs
 
 # project dirs
@@ -49,5 +48,7 @@ _darcs
 /datasets/*
 !/datasets/*.*
 /projects/*/datasets
+/pretrained/
 /models
 /snippet
+*.pt

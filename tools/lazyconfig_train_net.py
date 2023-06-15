@@ -40,7 +40,6 @@ def do_test(cfg, model):
         print_csv_format(ret)
         return ret
 
-
 def do_train(args, cfg):
     """
     Args:
@@ -103,11 +102,24 @@ def do_train(args, cfg):
         start_iter = 0
     trainer.train(start_iter, cfg.train.max_iter)
 
+def register_dataset():
+    from detectron2.data.datasets import register_coco_instances
+
+    register_coco_instances("maize_train", {},
+                            "/media/naeem/T7/datasets/maize_data_coco/annotations/instances_train.json",
+                            "/media/naeem/T7/datasets/maize_data_coco")
+    register_coco_instances("maize_valid", {},
+                            "/media/naeem/T7/datasets/maize_data_coco/annotations/instances_val.json",
+                            "/media/naeem/T7/datasets/maize_data_coco")
+
 
 def main(args):
     cfg = LazyConfig.load(args.config_file)
+    cfg.train.output_dir = "/media/naeem/T7/trainers/fcos_R_50_FPN_1x.py/output/"
+    cfg.dataloader.test.num_workers = 0  # for debugging
     cfg = LazyConfig.apply_overrides(cfg, args.opts)
     default_setup(cfg, args)
+    register_dataset()
 
     if args.eval_only:
         model = instantiate(cfg.model)

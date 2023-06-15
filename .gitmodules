@@ -1,0 +1,3 @@
+[submodule "tools/fast-autoaugment"]
+	path = tools/fast-autoaugment
+	url = git@github.com:kakaobrain/fast-autoaugment.git
