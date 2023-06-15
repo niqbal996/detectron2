@@ -41,7 +41,6 @@ model_ts*.txt
 
 # editor settings
 .idea
-.vscode
 _darcs
 
 # project dirs
