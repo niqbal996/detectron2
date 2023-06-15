@@ -211,15 +211,21 @@ if __name__ == "__main__":
     # Disable respecialization on new shapes. Otherwise --run-eval will be slow
     torch._C._jit_set_bailout_depth(1)
     from detectron2.data.datasets import register_coco_instances
-    register_coco_instances("maize_valid", {},
-                            "/media/naeem/T7/datasets/maize_data_coco/annotations/instances_val.json",
-                            "/media/naeem/T7/datasets/maize_data_coco")
+    # register_coco_instances("maize_valid", {},
+    #                         "/media/naeem/T7/datasets/maize_data_coco/annotations/instances_val.json",
+    #                         "/media/naeem/T7/datasets/maize_data_coco")
+    register_coco_instances("coco_2017_train_2", {},
+                        "/mnt/d/datasets/coco/annotations/instances_train2017.json",
+                        "/mnt/d/datasets/coco/images/train2017")
+    register_coco_instances("coco_2017_val_2", {},
+                        "/mnt/d/datasets/coco/annotations/instances_val2017.json",
+                        "/mnt/d/datasets/coco/images/val2017")
 
     # cfg = setup_cfg(args)
 
     # create a torch model
     cfg = LazyConfig.load(args.config_file)
-    cfg.train.output_dir = "/media/naeem/T7/trainers/fcos_R_50_FPN_1x.py/output/"
+    # cfg.train.output_dir = "/media/naeem/T7/trainers/fcos_R_50_FPN_1x.py/output/"
     cfg.dataloader.test.num_workers = 0  # for debugging
     # cfg = LazyConfig.apply_overrides(cfg, args.opts)
     default_setup(cfg, args)

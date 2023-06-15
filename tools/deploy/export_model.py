@@ -228,23 +228,23 @@ if __name__ == "__main__":
 
     from detectron2.data.datasets import register_coco_instances
 
-    register_coco_instances("maize_valid", {},
+    register_coco_instances("maize_val", {},
                             "/media/naeem/T7/datasets/maize_data_coco/annotations/instances_val.json",
                             "/media/naeem/T7/datasets/maize_data_coco")
 
     predictor = DefaultPredictor(cfg)
 
-    dataset_dicts = DatasetCatalog.get("maize_valid")
-    for data in dataset_dicts:
-        image = cv2.imread(data['file_name'])
-        outputs = predictor(image)
-        v = Visualizer(image[:, :, ::-1], MetadataCatalog.get(cfg.DATASETS.TRAIN[0]), scale=1.2)
-        out = v.draw_instance_predictions(outputs["instances"].to("cpu"))
-        # if len(outputs['instances']) != 0:
-        boxes = outputs["instances"]._fields['pred_boxes'].to("cpu").tensor.numpy()[0]
-        out = v.draw_box(boxes)
-        cv2.imshow('fig', out.get_image())
-        cv2.waitKey()
+    # dataset_dicts = DatasetCatalog.get("maize_valid")
+    # for data in dataset_dicts:
+    #     image = cv2.imread(data['file_name'])
+    #     outputs = predictor(image)
+    #     v = Visualizer(image[:, :, ::-1], MetadataCatalog.get(cfg.DATASETS.TRAIN[0]), scale=1.2)
+    #     out = v.draw_instance_predictions(outputs["instances"].to("cpu"))
+    #     # if len(outputs['instances']) != 0:
+    #     boxes = outputs["instances"]._fields['pred_boxes'].to("cpu").tensor.numpy()[0]
+    #     out = v.draw_box(boxes)
+    #     cv2.imshow('fig', out.get_image())
+    #     cv2.waitKey()
 
     # get sample data
     sample_inputs = get_sample_inputs(args)
