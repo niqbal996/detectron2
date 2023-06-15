@@ -21,6 +21,7 @@ from PIL import Image
 
 from .augmentation import Augmentation, _transform_to_aug
 from .transform import ExtentTransform, ResizeTransform, RotationTransform
+import albumentations as T
 
 __all__ = [
     "FixedSizeCrop",
@@ -37,8 +38,262 @@ __all__ = [
     "ResizeScale",
     "ResizeShortestEdge",
     "RandomCrop_CategoryAreaConstraint",
+    "RandomCropAbt",
+    "MotionBlurAbt",
+    "BlurAbt",
+    "MedianBlurAbt",
+    "RandomGammaAbt",
+    "RandomBrightnessContrastAbt",
+    "ClaheAbt",
+    "ToGrayAbt",
+    "ImageCompressionAbt",
 ]
 
+class ImageCompressionAbt(Augmentation):
+    """
+    Randomly apply an augmentation with a given probability.
+    """
+
+    def __init__(self, quality_lower=99, quality_upper=100, always_apply=False, p=0.5):
+        """
+        Args:
+            tfm_or_aug (Transform, Augmentation): the transform or augmentation
+                to be applied. It can either be a `Transform` or `Augmentation`
+                instance.
+            prob (float): probability between 0.0 and 1.0 that
+                the wrapper transformation is applied
+        """
+        super().__init__()
+        self.quality_lower = quality_lower
+        self.quality_upper = quality_upper
+        self.prob = p
+        self.always_apply = always_apply
+        self.transform = T.ImageCompression(quality_lower=self.quality_lower,
+                                        quality_upper=self.quality_upper,
+                                        always_apply=self.always_apply,
+                                        p=self.prob)
+
+    def get_transform(self, image):
+        do = self._rand_range() < self.prob
+        if do:
+            return self.transform(image)
+        else:
+            return NoOpTransform()
+
+
+
+
+class RandomGammaAbt(Augmentation):
+    """
+    Randomly apply an augmentation with a given probability.
+    """
+
+    def __init__(self, gamma_limit=(80, 120), eps=None, always_apply=False, p=0.5):
+        """
+        Args:
+            tfm_or_aug (Transform, Augmentation): the transform or augmentation
+                to be applied. It can either be a `Transform` or `Augmentation`
+                instance.
+            prob (float): probability between 0.0 and 1.0 that
+                the wrapper transformation is applied
+        """
+        super().__init__()
+        self.gamma_limit = gamma_limit
+        self.eps = eps
+        self.prob = p
+        self.always_apply = always_apply
+        self.transform = T.RandomGamma(gamma_limit=self.gamma_limit,
+                                        eps=self.eps,
+                                        always_apply=self.always_apply,
+                                        p=self.prob)
+
+    def get_transform(self, image):
+        do = self._rand_range() < self.prob
+        if do:
+            return self.transform(image)
+        else:
+            return NoOpTransform()
+
+
+class RandomBrightnessContrastAbt(Augmentation):
+    """
+    Randomly apply an augmentation with a given probability.
+    """
+
+    def __init__(self, brightness_limit=0.2, contrast_limit=0.2, brightness_by_max=True, always_apply=False, p=0.5):
+        """
+        Args:
+            tfm_or_aug (Transform, Augmentation): the transform or augmentation
+                to be applied. It can either be a `Transform` or `Augmentation`
+                instance.
+            prob (float): probability between 0.0 and 1.0 that
+                the wrapper transformation is applied
+        """
+        super().__init__()
+        self.brightness_limit = brightness_limit
+        self.contrast_limit = contrast_limit
+        self.brightness_by_max = brightness_by_max
+        self.prob = p
+        self.always_apply = always_apply
+        self.transform = T.RandomBrightnessContrast(brightness_limit=self.brightness_limit,
+                                 contrast_limit=self.contrast_limit,
+                                 brightness_by_max=self.brightness_by_max,
+                                 always_apply=self.always_apply,
+                                 p=self.prob)
+
+    def get_transform(self, image):
+        do = self._rand_range() < self.prob
+        if do:
+            return self.transform(image)
+        else:
+            return NoOpTransform()
+
+
+class ClaheAbt(Augmentation):
+    """
+    Randomly apply an augmentation with a given probability.
+    """
+
+    def __init__(self, clip_limit=4.0, tile_grid_size=(8, 8), always_apply=False, p=0.5):
+        """
+        Args:
+            tfm_or_aug (Transform, Augmentation): the transform or augmentation
+                to be applied. It can either be a `Transform` or `Augmentation`
+                instance.
+            prob (float): probability between 0.0 and 1.0 that
+                the wrapper transformation is applied
+        """
+        super().__init__()
+        self.clip_limit = clip_limit
+        self.tile_grid_size = tile_grid_size
+        self.prob = p
+        self.always_apply = always_apply
+        self.transform = T.CLAHE(clip_limit=self.clip_limit,
+                                 tile_grid_size=self.tile_grid_size,
+                                 always_apply=self.always_apply,
+                                 p=self.prob)
+
+    def get_transform(self, image):
+        do = self._rand_range() < self.prob
+        if do:
+            return self.transform(image)
+        else:
+            return NoOpTransform()
+
+class ToGrayAbt(Augmentation):
+    """
+    Randomly apply an augmentation with a given probability.
+    """
+
+    def __init__(self, p=0.5):
+        """
+        Args:
+            tfm_or_aug (Transform, Augmentation): the transform or augmentation
+                to be applied. It can either be a `Transform` or `Augmentation`
+                instance.
+            prob (float): probability between 0.0 and 1.0 that
+                the wrapper transformation is applied
+        """
+        super().__init__()
+        self.prob = p
+        self.transform = T.ToGray(self.prob)
+
+    def get_transform(self, image):
+        do = self._rand_range() < self.prob
+        if do:
+            return self.transform(image)
+        else:
+            return NoOpTransform()
+
+
+class MedianBlurAbt(Augmentation):
+    """
+    Randomly apply an augmentation with a given probability.
+    """
+
+    def __init__(self, blur_limit=7, always_apply=False, p=0.5):
+        """
+        Args:
+            tfm_or_aug (Transform, Augmentation): the transform or augmentation
+                to be applied. It can either be a `Transform` or `Augmentation`
+                instance.
+            prob (float): probability between 0.0 and 1.0 that
+                the wrapper transformation is applied
+        """
+        super().__init__()
+        self.blur_limit = blur_limit
+        self.prob = p
+        self.always_apply = always_apply
+        self.transform = T.MedianBlur(self.blur_limit,
+                                      self.always_apply,
+                                      self.prob)
+
+    def get_transform(self, image):
+        do = self._rand_range() < self.prob
+        if do:
+            return self.transform(image)
+        else:
+            return NoOpTransform()
+
+class BlurAbt(Augmentation):
+    """
+    Randomly apply an augmentation with a given probability.
+    """
+
+    def __init__(self, blur_limit=7, always_apply=False, p=0.5):
+        """
+        Args:
+            tfm_or_aug (Transform, Augmentation): the transform or augmentation
+                to be applied. It can either be a `Transform` or `Augmentation`
+                instance.
+            prob (float): probability between 0.0 and 1.0 that
+                the wrapper transformation is applied
+        """
+        super().__init__()
+        self.blur_limit = blur_limit
+        self.prob = p
+        self.always_apply = always_apply
+        self.transform = T.Blur(self.blur_limit,
+                                self.always_apply,
+                                self.prob)
+
+    def get_transform(self, image):
+        do = self._rand_range() < self.prob
+        if do:
+            return self.transform(image)
+        else:
+            return NoOpTransform()
+
+class MotionBlurAbt(Augmentation):
+    """
+    Randomly apply an augmentation with a given probability.
+    """
+
+    def __init__(self, blur_limit=7, allow_shifted=True, always_apply=False, p=0.5):
+        """
+        Args:
+            tfm_or_aug (Transform, Augmentation): the transform or augmentation
+                to be applied. It can either be a `Transform` or `Augmentation`
+                instance.
+            prob (float): probability between 0.0 and 1.0 that
+                the wrapper transformation is applied
+        """
+        super().__init__()
+        self.blur_limit = blur_limit
+        self.allow_shifted = allow_shifted
+        self.prob = p
+        self.always_apply = always_apply
+        self.transform = T.MotionBlur(self.blur_limit,
+                                      self.allow_shifted,
+                                      self.always_apply,
+                                      self.prob)
+
+    def get_transform(self, image):
+        do = self._rand_range() < self.prob
+        if do:
+            return self.transform(image)
+        else:
+            return NoOpTransform()
 
 class RandomApply(Augmentation):
     """
@@ -70,6 +325,33 @@ class RandomApply(Augmentation):
         do = self._rand_range() < self.prob
         if do:
             return self.aug(aug_input)
+        else:
+            return NoOpTransform()
+
+class RandomCropAbt(Augmentation):
+    """
+    Randomly apply an augmentation with a given probability.
+    """
+
+    def __init__(self, width=256, height=256, p=0.2):
+        """
+        Args:
+            tfm_or_aug (Transform, Augmentation): the transform or augmentation
+                to be applied. It can either be a `Transform` or `Augmentation`
+                instance.
+            prob (float): probability between 0.0 and 1.0 that
+                the wrapper transformation is applied
+        """
+        super().__init__()
+        self.width = width
+        self.height = height
+        self.prob = p
+        self.transform = T.RandomCrop(self.width, self.height)
+    def get_transform(self, image):
+        h, w = image.shape[:2]
+        do = self._rand_range() < self.prob
+        if do:
+            return self.transform(image)
         else:
             return NoOpTransform()
 
