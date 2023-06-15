@@ -49,5 +49,7 @@ _darcs
 /datasets/*
 !/datasets/*.*
 /projects/*/datasets
+/pretrained/
 /models
 /snippet
+*.pt
