@@ -12,7 +12,12 @@ from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import get_cfg
 from detectron2.data import build_detection_test_loader, detection_utils
 from detectron2.evaluation import COCOEvaluator, inference_on_dataset, print_csv_format
-from detectron2.export import TracingAdapter, dump_torchscript_IR, scripting_with_instances
+from detectron2.export import (
+    STABLE_ONNX_OPSET_VERSION,
+    TracingAdapter,
+    dump_torchscript_IR,
+    scripting_with_instances,
+)
 from detectron2.modeling import GeneralizedRCNN, RetinaNet, build_model
 from detectron2.modeling.postprocessing import detector_postprocess
 from detectron2.projects.point_rend import add_pointrend_config
@@ -131,17 +136,7 @@ def export_tracing(torch_model, inputs):
         dump_torchscript_IR(ts_model, args.output)
     elif args.format == "onnx":
         with PathManager.open(os.path.join(args.output, "model.onnx"), "wb") as f:
-            torch.onnx.export(traceable_model, (image,), f,
-                              # verbose=True,
-                              opset_version=11,
-                              # training=torch.onnx.TrainingMode.EVAL,
-                              # do_constant_folding=True,
-                              # input_names=['images'],
-                              # output_names=['output'],
-                              # dynamic_axes={'images': {0: 'batch', 2: 'height', 3: 'width'},  # shape(1,3,640,640)
-                              #               'output': {0: 'batch', 1: 'anchors'}  # shape(1,25200,85)
-                              #               }
-                              )
+            torch.onnx.export(traceable_model, (image,), f, opset_version=STABLE_ONNX_OPSET_VERSION)
     logger.info("Inputs schema: " + str(traceable_model.inputs_schema))
     logger.info("Outputs schema: " + str(traceable_model.outputs_schema))
 
@@ -216,7 +211,7 @@ if __name__ == "__main__":
     logger = setup_logger()
     logger.info("Command line arguments: " + str(args))
     PathManager.mkdirs(args.output)
-    # Disable respecialization on new shapes. Otherwise --run-eval will be slow
+    # Disable re-specialization on new shapes. Otherwise --run-eval will be slow
     torch._C._jit_set_bailout_depth(1)
 
     cfg = setup_cfg(args)
@@ -226,6 +221,7 @@ if __name__ == "__main__":
     DetectionCheckpointer(torch_model).resume_or_load(cfg.MODEL.WEIGHTS)
     torch_model.eval()
 
+<<<<<<< HEAD
     from detectron2.data.datasets import register_coco_instances
 
     register_coco_instances("maize_val", {},
@@ -249,12 +245,16 @@ if __name__ == "__main__":
     # get sample data
     sample_inputs = get_sample_inputs(args)
 
+=======
+>>>>>>> 94113be6e12db36b8c7601e13747587f19ec92fe
     # convert and save model
     if args.export_method == "caffe2_tracing":
+        sample_inputs = get_sample_inputs(args)
         exported_model = export_caffe2_tracing(cfg, torch_model, sample_inputs)
     elif args.export_method == "scripting":
         exported_model = export_scripting(torch_model)
     elif args.export_method == "tracing":
+        sample_inputs = get_sample_inputs(args)
         exported_model = export_tracing(torch_model, sample_inputs)
 
     # run evaluation with the converted model
@@ -270,3 +270,4 @@ if __name__ == "__main__":
         evaluator = COCOEvaluator(dataset, output_dir=args.output)
         metrics = inference_on_dataset(exported_model, data_loader, evaluator)
         print_csv_format(metrics)
+    logger.info("Success.")

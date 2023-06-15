@@ -62,7 +62,6 @@ class DenseDetector(nn.Module):
             self.head_in_features = sorted(shapes.keys(), key=lambda x: shapes[x].stride)
         else:
             self.head_in_features = head_in_features
-
         self.register_buffer("pixel_mean", torch.tensor(pixel_mean).view(-1, 1, 1), False)
         self.register_buffer("pixel_std", torch.tensor(pixel_std).view(-1, 1, 1), False)
 
@@ -127,7 +126,11 @@ class DenseDetector(nn.Module):
         """
         images = [self._move_to_current_device(x["image"]) for x in batched_inputs]
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
-        images = ImageList.from_tensors(images, self.backbone.size_divisibility)
+        images = ImageList.from_tensors(
+            images,
+            self.backbone.size_divisibility,
+            padding_constraints=self.backbone.padding_constraints,
+        )
         return images
 
     def _transpose_dense_predictions(
@@ -211,7 +214,12 @@ class DenseDetector(nn.Module):
         topk_idxs = torch.nonzero(keep_idxs)  # Kx2
 
         # 2. Keep top k top scoring boxes only
-        num_topk = min(topk_candidates, topk_idxs.size(0))
+        topk_idxs_size = topk_idxs.shape[0]
+        if isinstance(topk_idxs_size, Tensor):
+            # It's a tensor in tracing
+            num_topk = torch.clamp(topk_idxs_size, max=topk_candidates)
+        else:
+            num_topk = min(topk_idxs_size, topk_candidates)
         pred_scores, idxs = pred_scores.topk(num_topk)
         topk_idxs = topk_idxs[idxs]
 
@@ -241,8 +249,8 @@ class DenseDetector(nn.Module):
                 anchors_i,
                 box_cls_i,
                 box_reg_i,
-                self.test_score_thresh,
-                self.test_topk_candidates,
+                score_thresh,
+                topk_candidates,
                 image_size,
             )
             # Iterate over every feature level
