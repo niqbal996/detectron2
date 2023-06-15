@@ -9,11 +9,11 @@ from detectron2.data import (
     get_detection_dataset_dicts,
 )
 from detectron2.evaluation import COCOEvaluator
-
+import torchvision
 dataloader = OmegaConf.create()
 
 dataloader.train = L(build_detection_train_loader)(
-    dataset=L(get_detection_dataset_dicts)(names="maize_train"),
+    dataset=L(get_detection_dataset_dicts)(names="syn_maize_train"),
     mapper=L(DatasetMapper)(
         is_train=True,
         augmentations=[
@@ -45,4 +45,5 @@ dataloader.test = L(build_detection_test_loader)(
 
 dataloader.evaluator = L(COCOEvaluator)(
     dataset_name="${..test.dataset.names}",
+    max_dets_per_image=500,
 )
