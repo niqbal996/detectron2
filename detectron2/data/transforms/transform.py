@@ -30,9 +30,42 @@ __all__ = [
     "RotationTransform",
     "ColorTransform",
     "PILColorTransform",
+    "AlbumentationsTransform"
 ]
 
+class AlbumentationsTransform(Transform):
+    def __init__(self, aug):
+        self.aug = aug
+        self.params = aug.get_params()
 
+    def apply_coords(self, coords: np.ndarray) -> np.ndarray:
+        return coords
+
+    def apply_image(self, image):
+        self.params = self.prepare_param(image)
+        return self.aug.apply(image, **self.params)
+
+    def apply_box(self, box: np.ndarray) -> np.ndarray:
+        try:
+            return np.array(self.aug.apply_to_bboxes(box.tolist(), **self.params))
+        except AttributeError:
+            return box
+
+    def apply_segmentation(self, segmentation: np.ndarray) -> np.ndarray:
+        try:
+            return self.aug.apply_to_mask(segmentation, **self.params)
+        except AttributeError:
+            return segmentation
+
+    def prepare_param(self, image):
+        params = self.aug.get_params()
+        if self.aug.targets_as_params:
+            targets_as_params = {"image": image}
+            params_dependent_on_targets = self.aug.get_params_dependent_on_targets(targets_as_params)
+            params.update(params_dependent_on_targets)
+        params = self.aug.update_params(params, **{"image": image})
+        return params
+    
 class ExtentTransform(Transform):
     """
     Extracts a subregion from the source image and scales it to the output size.

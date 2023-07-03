@@ -8,12 +8,15 @@ from detectron2.data import (
     build_detection_train_loader,
     get_detection_dataset_dicts,
 )
+import albumentations as A
+from detectron2.data import transforms as T
+from detectron2.data.transforms import AlbumentationsWrapper
 from detectron2.evaluation import COCOEvaluator
 import torchvision
 dataloader = OmegaConf.create()
 
 dataloader.train = L(build_detection_train_loader)(
-    dataset=L(get_detection_dataset_dicts)(names="syn_maize_train"),
+    dataset=L(get_detection_dataset_dicts)(names="maize_syn_v2_train"),
     mapper=L(DatasetMapper)(
         is_train=True,
         augmentations=[
@@ -22,7 +25,14 @@ dataloader.train = L(build_detection_train_loader)(
                 sample_style="choice",
                 max_size=1333,
             ),
-            L(T.RandomFlip)(horizontal=True),
+            AlbumentationsWrapper(A.HorizontalFlip(p=0.1)),
+            AlbumentationsWrapper(A.MotionBlur(blur_limit=13, p=0.8)),
+            AlbumentationsWrapper(A.Blur(blur_limit=13, p=0.8)),
+            AlbumentationsWrapper(A.MedianBlur(blur_limit=13, p=0.8)),
+            AlbumentationsWrapper(A.ToGray(p=0.01)),
+            AlbumentationsWrapper(A.CLAHE(p=0.3)),
+            AlbumentationsWrapper(A.RandomBrightnessContrast(p=0.01)),
+            AlbumentationsWrapper(A.ImageCompression(quality_lower=75, p=0.5))
         ],
         image_format="BGR",
         use_instance_mask=True,
@@ -32,7 +42,7 @@ dataloader.train = L(build_detection_train_loader)(
 )
 
 dataloader.test = L(build_detection_test_loader)(
-    dataset=L(get_detection_dataset_dicts)(names="maize_valid", filter_empty=False),
+    dataset=L(get_detection_dataset_dicts)(names="maize_real_v2_val", filter_empty=False),
     mapper=L(DatasetMapper)(
         is_train=False,
         augmentations=[

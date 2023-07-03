@@ -23,7 +23,8 @@ from PIL import Image
 from detectron2.structures import Boxes, pairwise_iou
 
 from .augmentation import Augmentation, _transform_to_aug
-from .transform import ExtentTransform, ResizeTransform, RotationTransform
+from .transform import ExtentTransform, ResizeTransform, RotationTransform, AlbumentationsTransform
+import albumentations as T
 
 __all__ = [
     "FixedSizeCrop",
@@ -42,8 +43,8 @@ __all__ = [
     "RandomCrop_CategoryAreaConstraint",
     "RandomResize",
     "MinIoURandomCrop",
+    "AlbumentationsWrapper",
 ]
-
 
 class RandomApply(Augmentation):
     """
@@ -77,7 +78,6 @@ class RandomApply(Augmentation):
             return self.aug(aug_input)
         else:
             return NoOpTransform()
-
 
 class RandomFlip(Augmentation):
     """
@@ -734,3 +734,53 @@ class MinIoURandomCrop(Augmentation):
                     if not mask.any():
                         continue
                 return CropTransform(int(left), int(top), int(new_w), int(new_h))
+
+#https://github.com/facebookresearch/detectron2/issues/3054
+class AlbumentationsWrapper(Augmentation):
+    """
+    Wrap an augmentor form the albumentations library: https://github.com/albu/albumentations.
+    Image, Bounding Box and Segmentation are supported.
+    Example:
+    .. code-block:: python
+        import albumentations as A
+        from detectron2.data import transforms as T
+        from detectron2.data.transforms.albumentations import AlbumentationsWrapper
+
+        augs = T.AugmentationList([
+            AlbumentationsWrapper(A.RandomCrop(width=256, height=256)),
+            AlbumentationsWrapper(A.HorizontalFlip(p=1)),
+            AlbumentationsWrapper(A.RandomBrightnessContrast(p=1)),
+        ])  # type: T.Augmentation
+
+        # Transform XYXY_ABS -> XYXY_REL
+        h, w, _ = IMAGE.shape
+        bbox = np.array(BBOX_XYXY) / [w, h, w, h]
+
+        # Define the augmentation input ("image" required, others optional):
+        input = T.AugInput(IMAGE, boxes=bbox, sem_seg=IMAGE_MASK)
+
+        # Apply the augmentation:
+        transform = augs(input)
+        image_transformed = input.image  # new image
+        sem_seg_transformed = input.sem_seg  # new semantic segmentation
+        bbox_transformed = input.boxes   # new bounding boxes
+
+        # Transform XYXY_REL -> XYXY_ABS
+        h, w, _ = image_transformed.shape
+        bbox_transformed = bbox_transformed * [w, h, w, h]
+    """
+
+    def __init__(self, augmentor):
+        """
+        Args:
+            augmentor (albumentations.BasicTransform):
+        """
+        # super(Albumentations, self).__init__() - using python > 3.7 no need to call rng
+        self._aug = augmentor
+
+    def get_transform(self, image):
+        do = self._rand_range() < self._aug.p
+        if do:
+            return AlbumentationsTransform(self._aug)
+        else:
+            return NoOpTransform()
