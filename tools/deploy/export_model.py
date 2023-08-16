@@ -170,7 +170,7 @@ def get_sample_inputs(args):
         original_image = detection_utils.read_image(args.sample_image, format=cfg.INPUT.FORMAT)
         # Do same preprocessing as DefaultPredictor
         aug = T.ResizeShortestEdge(
-            [cfg.INPUT.MIN_SIZE_TEST, cfg.INPUT.MIN_SIZE_TEST], cfg.INPUT.MAX_SIZE_TEST
+            [600], 1333
         )
         height, width = original_image.shape[:2]
         image = aug.get_transform(original_image).apply_image(original_image)
@@ -220,13 +220,11 @@ if __name__ == "__main__":
     torch_model = build_model(cfg)
     DetectionCheckpointer(torch_model).resume_or_load(cfg.MODEL.WEIGHTS)
     torch_model.eval()
-
-<<<<<<< HEAD
     from detectron2.data.datasets import register_coco_instances
 
-    register_coco_instances("maize_val", {},
-                            "/media/naeem/T7/datasets/maize_data_coco/annotations/instances_val.json",
-                            "/media/naeem/T7/datasets/maize_data_coco")
+    # register_coco_instances("maize_val", {},
+    #                         "/media/naeem/T7/datasets/maize_data_coco/annotations/instances_val.json",
+    #                         "/media/naeem/T7/datasets/maize_data_coco")
 
     predictor = DefaultPredictor(cfg)
 
@@ -244,9 +242,6 @@ if __name__ == "__main__":
 
     # get sample data
     sample_inputs = get_sample_inputs(args)
-
-=======
->>>>>>> 94113be6e12db36b8c7601e13747587f19ec92fe
     # convert and save model
     if args.export_method == "caffe2_tracing":
         sample_inputs = get_sample_inputs(args)

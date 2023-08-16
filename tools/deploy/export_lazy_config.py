@@ -6,6 +6,7 @@ from typing import Dict, List, Tuple
 import torch
 import cv2
 from torch import Tensor, nn
+import numpy as np
 
 import detectron2.data.transforms as T
 from detectron2.checkpoint import DetectionCheckpointer
@@ -28,7 +29,8 @@ from detectron2.data import MetadataCatalog
 from detectron2.data.catalog import DatasetCatalog
 from detectron2.engine import DefaultTrainer
 from detectron2.evaluation import COCOEvaluator
-
+import onnxruntime
+import onnx
 
 def setup_cfg(args):
     cfg = get_cfg()
@@ -133,7 +135,7 @@ def export_tracing(torch_model, inputs):
         dump_torchscript_IR(ts_model, args.output)
     elif args.format == "onnx":
         with PathManager.open(os.path.join(args.output, "model.onnx"), "wb") as f:
-            torch.onnx.export(traceable_model, (image,), f, export_params=True, opset_version=11, verbose=True)
+            torch.onnx.export(traceable_model, (image,), f, export_params=True, opset_version=15, verbose=True)
     logger.info("Inputs schema: " + str(traceable_model.inputs_schema))
     logger.info("Outputs schema: " + str(traceable_model.outputs_schema))
 
@@ -164,21 +166,88 @@ def get_sample_inputs(args):
         return first_batch
     else:
         # get a sample data
-        original_image = detection_utils.read_image(args.sample_image, format=cfg.INPUT.FORMAT)
+        original_image = detection_utils.read_image(args.sample_image, format='BGR')
         # Do same preprocessing as DefaultPredictor
+        # aug = T.ResizeShortestEdge(
+        #     [cfg.INPUT.MIN_SIZE_TEST, cfg.INPUT.MIN_SIZE_TEST], cfg.INPUT.MAX_SIZE_TEST
+        # )
+        import numpy as np
         aug = T.ResizeShortestEdge(
-            [cfg.INPUT.MIN_SIZE_TEST, cfg.INPUT.MIN_SIZE_TEST], cfg.INPUT.MAX_SIZE_TEST
+            [600, 800], 1066
         )
         height, width = original_image.shape[:2]
         image = aug.get_transform(original_image).apply_image(original_image)
+        # cv2.imshow('img', image)
+        # cv2.waitKey()
+        # cv2.destroyWindow('img')
         image = torch.as_tensor(image.astype("float32").transpose(2, 0, 1))
 
         inputs = {"image": image, "height": height, "width": width}
-
+        
         # Sample ready
         sample_inputs = [inputs]
         return sample_inputs
 
+def scale_boxes(boxes, current_size=(800, 1067), new_size=(1536, 2048)):
+    x_factor = new_size[0] / current_size[0]
+    y_factor = new_size[1] / current_size[1]
+    boxes[:, 0] = boxes[:, 0] * x_factor
+    boxes[:, 2] = boxes[:, 2] * x_factor
+    boxes[:, 1] = boxes[:, 1] * y_factor
+    boxes[:, 3] = boxes[:, 3] * y_factor
+    return boxes
+
+
+def infer_onnx(model_file, sample_input):
+    import cv2
+    exec_providers = onnxruntime.get_available_providers()
+    exec_provider = ['CUDAExecutionProvider'] if 'CUDAExecutionProvider' in exec_providers else ['CPUExecutionProvider']
+
+    session = onnxruntime.InferenceSession(model_file, sess_options=None, providers=exec_provider)
+    input_name = session.get_inputs()[0].name
+    output_name = session.get_outputs()[0].name
+    tmp = sample_input[0]['image'].numpy()
+    tmp = np.transpose(tmp, (1,2,0)).astype(np.uint8)
+    cv2.imshow('figure', tmp)
+    cv2.waitKey()
+    cv2.destroyWindow('figure')
+    pred = session.run(None, {input_name: sample_input[0]['image'].numpy()})
+    
+    conf_inds = np.where(pred[2] > 0.50)
+    filtered = {}
+    filtered[0] = pred[0][conf_inds]
+    filtered[1] = pred[1][conf_inds]
+    filtered[2] = pred[2][conf_inds]
+    filtered[3] = pred[3]
+    filtered[0] = scale_boxes(filtered[0],
+                               current_size=(sample_input[0]['image'].shape[2],
+                                             sample_input[0]['image'].shape[1]),
+                               new_size=(sample_input[0]['width'],
+                                         sample_input[0]['height']))
+    orig_image = cv2.imread('/home/niqbal/coco_test.png')
+    # class_ids = {0: 'weeds', 1: 'maize'}
+
+    for obj in range(filtered[0].shape[0]):
+        box = filtered[0][obj, :]
+        if filtered[1][obj] == 0:
+            color = (0, 0, 255)
+        else:
+            color = (255, 0, 0)
+        cv2.rectangle(orig_image,
+                      pt1=(int(box[0]), int(box[1])),
+                      pt2=(int(box[2]), int(box[3])),
+                      color=color,
+                      thickness=2)
+        # cv2.putText(orig_image,
+        #             '{:.2f} {}'.format(filtered[2][obj], class_ids[filtered[1][obj]]),
+        #             org=(int(box[0]), int(box[1] - 10)),
+        #             fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+        #             fontScale=0.5,
+        #             thickness=2,
+        #             color=color)
+    # cv2.imwrite("./output_data/{:04}.png".format(count), orig)
+    cv2.imshow('figure', orig_image)
+    cv2.waitKey()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export a model for deployment.")
@@ -226,7 +295,7 @@ if __name__ == "__main__":
     # create a torch model
     cfg = LazyConfig.load(args.config_file)
     # cfg.train.output_dir = "/media/naeem/T7/trainers/fcos_R_50_FPN_1x.py/output/"
-    cfg.dataloader.test.num_workers = 0  # for debugging
+    # cfg.dataloader.test.num_workers = 0  # for debugging
     # cfg = LazyConfig.apply_overrides(cfg, args.opts)
     default_setup(cfg, args)
 
@@ -249,18 +318,19 @@ if __name__ == "__main__":
     #     cv2.waitKey()
 
     # get sample data
-    # sample_inputs = get_sample_inputs(args)
-    eval_loader = instantiate(cfg.dataloader.test)
-    sample_inputs = next(iter(eval_loader))
+    sample_inputs = get_sample_inputs(args)
+    # eval_loader = instantiate(cfg.dataloader.test)
+    # sample_inputs = next(iter(eval_loader))
 
-    # convert and save model
-    if args.export_method == "caffe2_tracing":
-        exported_model = export_caffe2_tracing(cfg, torch_model, sample_inputs)
-    elif args.export_method == "scripting":
-        exported_model = export_scripting(torch_model)
-    elif args.export_method == "tracing":
-        exported_model = export_tracing(torch_model, sample_inputs)
-
+    # # convert and save model
+    # if args.export_method == "caffe2_tracing":
+    #     exported_model = export_caffe2_tracing(cfg, torch_model, sample_inputs)
+    # elif args.export_method == "scripting":
+    #     exported_model = export_scripting(torch_model)
+    # elif args.export_method == "tracing":
+    #     exported_model = export_tracing(torch_model, sample_inputs)
+    # exported_model = onnx.load('./pretrained/model.onnx')
+    infer_onnx('./pretrained/model.onnx', sample_inputs)
     # run evaluation with the converted model
     if args.run_eval:
         assert exported_model is not None, (
