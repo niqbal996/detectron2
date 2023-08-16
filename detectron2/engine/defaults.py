@@ -23,7 +23,7 @@ from torch.nn.parallel import DistributedDataParallel
 
 import detectron2.data.transforms as T
 from detectron2.checkpoint import DetectionCheckpointer
-from detectron2.config import CfgNode, LazyConfig
+from detectron2.config import CfgNode, LazyConfig, instantiate
 from detectron2.data import (
     MetadataCatalog,
     build_detection_test_loader,
@@ -375,7 +375,8 @@ class DefaultTrainer(TrainerBase):
         # Assume these objects must be constructed in this order.
         model = self.build_model(cfg)
         optimizer = self.build_optimizer(cfg, model)
-        data_loader = self.build_train_loader(cfg)
+        from configs.common.data.maize import dataloader
+        data_loader = instantiate(dataloader.train)
 
         model = create_ddp_model(model, broadcast_buffers=False)
         self._trainer = (AMPTrainer if cfg.SOLVER.AMP.ENABLED else SimpleTrainer)(
