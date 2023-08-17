@@ -15,6 +15,7 @@ in the config file and implement a new train_net.py to handle them.
 import logging
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
+import torch
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import LazyConfig, instantiate
 from detectron2.engine import (
@@ -29,7 +30,6 @@ from detectron2.engine import (
 from detectron2.engine.defaults import create_ddp_model
 from detectron2.evaluation import inference_on_dataset, print_csv_format
 from detectron2.utils import comm
-import torch
 logger = logging.getLogger("detectron2")
 
 
@@ -67,7 +67,7 @@ def do_train(args, cfg):
 
     cfg.optimizer.params.model = model
     optim = instantiate(cfg.optimizer)
-
+    # optim = torch.optim.AdamW(model.parameters(), lr=0.01)   # TODO: REmove afterDEBUG
     train_loader = instantiate(cfg.dataloader.train)
     val_loader = instantiate(cfg.dataloader.test)
 
@@ -145,11 +145,11 @@ def register_dataset():
     from detectron2.data.datasets import register_coco_instances
 
     register_coco_instances("maize_syn_v2_train", {},
-                            "/home/niqbal/datasets/maize_syn_v2/instances_train_2022_2.json",
-                            "/home/niqbal/datasets/maize_syn_v2/camera_main_camera/rect")
+                            "/netscratch/naeem/maize_syn_v3/instances_train_2022.json",
+                            "/netscratch/naeem/maize_syn_v3/data")
     register_coco_instances("maize_real_v2_val", {},
-                            "/home/niqbal/datasets/GIL_dataset/all_days/coco_anns/all_new_2022.json",
-                            "/home/niqbal/datasets/GIL_dataset/all_days/data")
+                            "/netscratch/naeem/maize_real_all_days/coco_annotations/all_data.json",
+                            "/netscratch/naeem/maize_real_all_days/data")
 
 
 def main(args):
