@@ -28,7 +28,8 @@ from detectron2.engine import (
 from detectron2.engine.defaults import create_ddp_model
 from detectron2.evaluation import inference_on_dataset, print_csv_format
 from detectron2.utils import comm
-
+from lossEvalHook import LossEvalHook
+import torch
 logger = logging.getLogger("detectron2")
 
 
@@ -68,6 +69,7 @@ def do_train(args, cfg):
     optim = instantiate(cfg.optimizer)
 
     train_loader = instantiate(cfg.dataloader.train)
+    val_loader = instantiate(cfg.dataloader.test)
 
     model = create_ddp_model(model, **cfg.train.ddp)
     trainer = (AMPTrainer if cfg.train.amp.enabled else SimpleTrainer)(model, train_loader, optim)
@@ -76,6 +78,7 @@ def do_train(args, cfg):
         cfg.train.output_dir,
         trainer=trainer,
     )
+
     trainer.register_hooks(
         [
             hooks.IterationTimer(),
@@ -92,6 +95,36 @@ def do_train(args, cfg):
             else None,
         ]
     )
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer=optim, 
+    #                                                        mode='min',      # Validation loss has to be reduced for scheduler hence min mode. 
+    #                                                        factor=0.1,     
+    #                                                        patience=500, # TODO chcck this based on validation loss
+    #                                                        threshold='rel',
+    #                                                        cooldown=2000,   # TODO check this based on validation loss
+    #                                                        min_lr=0,
+    #                                                        verbose=True)
+    # trainer.register_hooks(
+    #     [
+    #         hooks.IterationTimer(),
+    #         hooks.LRScheduler(scheduler=scheduler),
+    #         hooks.PeriodicCheckpointer(checkpointer, **cfg.train.checkpointer),
+    #         hooks.BestCheckpointer(eval_period=2500, checkpointer=checkpointer, 
+    #                                val_metric='bbox/AP50', mode='max', 
+    #                                file_prefix='model_best_mAP50')
+    #         if comm.is_main_process()
+    #         else None,
+    #         hooks.EvalHook(cfg.train.eval_period, lambda: do_test(cfg, model)),
+    #         LossEvalHook(100,  # TODO Set = 1000 after debugging
+    #                      model, 
+    #                      val_loader),
+    #         hooks.PeriodicWriter(
+    #             default_writers(cfg.train.output_dir, cfg.train.max_iter),
+    #             period=cfg.train.log_period,
+    #         )
+    #         if comm.is_main_process()
+    #         else None,
+    #     ]
+    # )
 
     checkpointer.resume_or_load(cfg.train.init_checkpoint, resume=args.resume)
     if args.resume and checkpointer.has_checkpoint():
@@ -105,17 +138,17 @@ def do_train(args, cfg):
 def register_dataset():
     from detectron2.data.datasets import register_coco_instances
 
-    register_coco_instances("maize_train", {},
-                            "/media/naeem/T7/datasets/maize_data_coco/annotations/instances_train.json",
-                            "/media/naeem/T7/datasets/maize_data_coco")
-    register_coco_instances("maize_valid", {},
-                            "/media/naeem/T7/datasets/maize_data_coco/annotations/instances_val.json",
-                            "/media/naeem/T7/datasets/maize_data_coco")
+    register_coco_instances("maize_syn_v2_train", {},
+                            "/home/niqbal/datasets/maize_syn_v2/instances_train_2022_2.json",
+                            "/home/niqbal/datasets/maize_syn_v2/camera_main_camera/rect")
+    register_coco_instances("maize_real_v2_val", {},
+                            "/home/niqbal/datasets/GIL_dataset/all_days/coco_anns/all_new_2022.json",
+                            "/home/niqbal/datasets/GIL_dataset/all_days/data")
 
 
 def main(args):
     cfg = LazyConfig.load(args.config_file)
-    cfg.train.output_dir = "/media/naeem/T7/trainers/fcos_R_50_FPN_1x.py/output/"
+    cfg.train.output_dir = "/home/niqbal/trainers/detectron2/fcos_validation_loss_best_model"
     cfg.dataloader.test.num_workers = 0  # for debugging
     cfg = LazyConfig.apply_overrides(cfg, args.opts)
     default_setup(cfg, args)
