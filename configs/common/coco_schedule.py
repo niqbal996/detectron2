@@ -61,7 +61,7 @@ def default_maize_scheduler(num_X):
             values=[0.1, 0.01, 0.001, 0.0001],
             # note that scheduler is scale-invariant. This is equivalent to
             # milestones=[6, 8, 9]
-            milestones=[2000, 4000, 8000, 15000],
+            milestones=[1200, 4000, 8000, 15000],
         )
     else:
         scheduler = L(MultiStepParamScheduler)(

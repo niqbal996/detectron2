@@ -17,5 +17,7 @@ dataloader.test.batch_size = 8
 dataloader.test.num_workers = 6
 
 train.max_iter = 20000
+train.eval_period = 1000
+train.log_period = 10
 train.init_checkpoint = "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
-train.output_dir = "/home/niqbal/trainers/detectron2/fcos_validation_loss_best_model"
+train.output_dir = "/home/niqbal/trainers/detectron2/fcos_validation_loss_best_model_0.0001"
