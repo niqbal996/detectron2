@@ -13,7 +13,8 @@ To add more complicated training logic, you can easily add other configs
 in the config file and implement a new train_net.py to handle them.
 """
 import logging
-
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import LazyConfig, instantiate
 from detectron2.engine import (
@@ -28,7 +29,6 @@ from detectron2.engine import (
 from detectron2.engine.defaults import create_ddp_model
 from detectron2.evaluation import inference_on_dataset, print_csv_format
 from detectron2.utils import comm
-from lossEvalHook import LossEvalHook
 import torch
 logger = logging.getLogger("detectron2")
 
@@ -79,44 +79,14 @@ def do_train(args, cfg):
         trainer=trainer,
     )
 
-    trainer.register_hooks(
-        [
-            hooks.IterationTimer(),
-            hooks.LRScheduler(scheduler=instantiate(cfg.lr_multiplier)),
-            hooks.PeriodicCheckpointer(checkpointer, **cfg.train.checkpointer)
-            if comm.is_main_process()
-            else None,
-            hooks.EvalHook(cfg.train.eval_period, lambda: do_test(cfg, model)),
-            hooks.PeriodicWriter(
-                default_writers(cfg.train.output_dir, cfg.train.max_iter),
-                period=cfg.train.log_period,
-            )
-            if comm.is_main_process()
-            else None,
-        ]
-    )
-    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer=optim, 
-    #                                                        mode='min',      # Validation loss has to be reduced for scheduler hence min mode. 
-    #                                                        factor=0.1,     
-    #                                                        patience=500, # TODO chcck this based on validation loss
-    #                                                        threshold='rel',
-    #                                                        cooldown=2000,   # TODO check this based on validation loss
-    #                                                        min_lr=0,
-    #                                                        verbose=True)
     # trainer.register_hooks(
     #     [
     #         hooks.IterationTimer(),
-    #         hooks.LRScheduler(scheduler=scheduler),
-    #         hooks.PeriodicCheckpointer(checkpointer, **cfg.train.checkpointer),
-    #         hooks.BestCheckpointer(eval_period=2500, checkpointer=checkpointer, 
-    #                                val_metric='bbox/AP50', mode='max', 
-    #                                file_prefix='model_best_mAP50')
+    #         hooks.LRScheduler(scheduler=instantiate(cfg.lr_multiplier)),
+    #         hooks.PeriodicCheckpointer(checkpointer, **cfg.train.checkpointer)
     #         if comm.is_main_process()
     #         else None,
     #         hooks.EvalHook(cfg.train.eval_period, lambda: do_test(cfg, model)),
-    #         LossEvalHook(100,  # TODO Set = 1000 after debugging
-    #                      model, 
-    #                      val_loader),
     #         hooks.PeriodicWriter(
     #             default_writers(cfg.train.output_dir, cfg.train.max_iter),
     #             period=cfg.train.log_period,
@@ -125,6 +95,42 @@ def do_train(args, cfg):
     #         else None,
     #     ]
     # )
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer=optim, 
+                                                           mode='min',      # Validation loss has to be reduced for scheduler hence min mode. 
+                                                           factor=0.1,     
+                                                           patience=500, # TODO chcck this based on validation loss
+                                                           threshold_mode='rel',
+                                                           cooldown=2000,   # TODO check this based on validation loss
+                                                           min_lr=0,
+                                                           verbose=True)
+    trainer.register_hooks(
+        [
+            hooks.IterationTimer(),
+            # hooks.LRScheduler(scheduler=scheduler, metric=LossEvalHook(100,  # TODO Set = 1000 after debugging
+            #                                                             model, 
+            #                                                             val_loader)),
+            hooks.LRScheduler(scheduler=instantiate(cfg.lr_multiplier)),
+            hooks.PeriodicCheckpointer(checkpointer, **cfg.train.checkpointer),
+            hooks.BestCheckpointer(eval_period=100, checkpointer=checkpointer, 
+                                   val_metric='validation_loss', mode='min', 
+                                   file_prefix='model_best_mAP50')
+            if comm.is_main_process()
+            else None,
+            hooks.EvalHook(cfg.train.eval_period, lambda: do_test(cfg, model)),
+            hooks.LossEvalHook(99,  # TODO Set = 1000 after debugging
+                         model, 
+                         val_loader),
+            hooks.PeriodicWriter(
+                default_writers(cfg.train.output_dir, cfg.train.max_iter),
+                period=cfg.train.log_period,
+            )
+            # hooks.TorchProfiler(
+            #  lambda trainer: 10 < trainer.iter < 20, cfg.train.output_dir
+            # )
+            if comm.is_main_process()
+            else None,
+        ]
+    )
 
     checkpointer.resume_or_load(cfg.train.init_checkpoint, resume=args.resume)
     if args.resume and checkpointer.has_checkpoint():
@@ -147,9 +153,7 @@ def register_dataset():
 
 
 def main(args):
-    cfg = LazyConfig.load(args.config_file)
-    cfg.train.output_dir = "/home/niqbal/trainers/detectron2/fcos_validation_loss_best_model"
-    cfg.dataloader.test.num_workers = 0  # for debugging
+    cfg = LazyConfig.load(args.config_file) 
     cfg = LazyConfig.apply_overrides(cfg, args.opts)
     default_setup(cfg, args)
     register_dataset()

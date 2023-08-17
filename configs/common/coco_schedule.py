@@ -54,14 +54,14 @@ def default_maize_scheduler(num_X):
     """
     # total number of iterations assuming 16 batch size, using 1440000/16=90000
     # 1000/70 = 15
-    total_steps_16bs = num_X * 15
+    # total_steps_16bs = num_X * 15
 
     if num_X <= 2:
         scheduler = L(MultiStepParamScheduler)(
-            values=[1.0, 0.1, 0.01, 0.001],
+            values=[0.1, 0.01, 0.001, 0.0001],
             # note that scheduler is scale-invariant. This is equivalent to
             # milestones=[6, 8, 9]
-            milestones=[5000, 15000, 25000, 28000],
+            milestones=[2000, 4000, 8000, 15000],
         )
     else:
         scheduler = L(MultiStepParamScheduler)(
@@ -81,5 +81,5 @@ lr_multiplier_2x = default_X_scheduler(2)
 lr_multiplier_3x = default_X_scheduler(3)
 lr_multiplier_6x = default_X_scheduler(6)
 lr_multiplier_9x = default_X_scheduler(9)
-lr_multiplier_12ep_warmup_maize =  default_maize_scheduler(2)
+lr_multiplier_12ep_warmup_maize =  default_maize_scheduler(1)
 
