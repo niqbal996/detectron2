@@ -4,8 +4,6 @@ from ..common.coco_schedule import lr_multiplier_1x as lr_multiplier
 from ..common.data.coco import dataloader
 from ..common.models.mask_rcnn_fpn import model
 from ..common.train import train
-from detectron2.data.datasets import register_coco_instances
-import datetime
 from omegaconf import OmegaConf
 
 import detectron2.data.transforms as T
@@ -21,7 +19,7 @@ from detectron2.evaluation import COCOEvaluator
 dataloader = OmegaConf.create()
 
 dataloader.train = L(build_detection_train_loader)(
-    dataset=L(get_detection_dataset_dicts)(names="maize_train"),
+    dataset=L(get_detection_dataset_dicts)(names="maize_syn_v2_train"),
     mapper=L(DatasetMapper)(
         is_train=True,
         augmentations=[
@@ -40,7 +38,7 @@ dataloader.train = L(build_detection_train_loader)(
 )
 
 dataloader.test = L(build_detection_test_loader)(
-    dataset=L(get_detection_dataset_dicts)(names="maize_valid", filter_empty=False),
+    dataset=L(get_detection_dataset_dicts)(names="maize_real_v2_val", filter_empty=False),
     mapper=L(DatasetMapper)(
         is_train=False,
         augmentations=[
@@ -56,34 +54,18 @@ dataloader.evaluator = L(COCOEvaluator)(
 )
 
 
-def register_dataset(path_to_data):
-    register_coco_instances("maize_train", { },
-                            path_to_data + "/coco_annotations/train_2022.json",
-                            path_to_data + "/data")
-    register_coco_instances("maize_valid", { },
-                            path_to_data + "/coco_annotations/valid_2022.json",
-                            path_to_data + "/data")
-
-
-path_to_data = '/home/cmanss/data/maize_dataset'
-register_dataset(path_to_data)
-
 dataloader.train.mapper.use_instance_mask = False
-# dataloader.train.dataset.names = 'maize_train'
-# dataloader.test.dataset.names = 'maize_valid'
-# dataloader.train.total_batch_size = 4
-
-optimizer.lr = 0.01
-
+dataloader.train.total_batch_size = 40
+dataloader.train.num_workers = 30
+optimizer.lr = 0.001
 
 model.backbone.bottom_up.freeze_at = 2
-model.pixel_mean = [136.25, 137.81, 135.14]
+# model.pixel_mean = [136.25, 137.81, 135.14]
 model.roi_heads.num_classes = 2
 del model.roi_heads.mask_in_features
 del model.roi_heads.mask_pooler
 del model.roi_heads.mask_head
+train.max_iter = 40000
 
-
-d = str(datetime.date.today())
-train.output_dir = '/home/cmanss/Projects/Agri-Gaia/technical-development/AP 4.1/detectron2-1/logs/' + f'maize_dataset/{d}_faster_rcnn_R_50_FPN_1x'
+train.output_dir = '/netscratch/naeem/frcnn_r50_FPN_1x_maize_pretrained_no_freeze_synthetic_0.001'
 train.init_checkpoint = "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
