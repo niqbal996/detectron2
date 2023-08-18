@@ -110,20 +110,20 @@ def do_train(args, cfg):
             #                                                             model, 
             #                                                             val_loader)),
             hooks.LRScheduler(scheduler=instantiate(cfg.lr_multiplier)),
-            hooks.PeriodicCheckpointer(checkpointer, **cfg.train.checkpointer),
-            hooks.BestCheckpointer(eval_period=100, checkpointer=checkpointer, 
-                                   val_metric='validation_loss', mode='min', 
-                                   file_prefix='model_best_mAP50')
+            hooks.PeriodicCheckpointer(checkpointer, **cfg.train.checkpointer)
             if comm.is_main_process()
             else None,
             hooks.EvalHook(cfg.train.eval_period, lambda: do_test(cfg, model)),
-            hooks.LossEvalHook(99,  # TODO Set = 1000 after debugging
+            hooks.LossEvalHook(cfg.train.eval_period,  # TODO Set = 1000 after debugging
                          model, 
                          val_loader),
             hooks.PeriodicWriter(
                 default_writers(cfg.train.output_dir, cfg.train.max_iter),
                 period=cfg.train.log_period,
-            )
+            ),
+            hooks.BestCheckpointer(eval_period=cfg.train.eval_period, checkpointer=checkpointer, 
+                                   val_metric='bbox/AP50', mode='max', 
+                                   file_prefix='model_best_mAP50')
             # hooks.TorchProfiler(
             #  lambda trainer: 10 < trainer.iter < 20, cfg.train.output_dir
             # )
