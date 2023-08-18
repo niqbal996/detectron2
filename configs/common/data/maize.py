@@ -26,7 +26,6 @@ dataloader.train = L(build_detection_train_loader)(
                 max_size=1333,
             ),
             # AlbumentationsWrapper(A.HorizontalFlip(p=0.1)),
-<<<<<<< Updated upstream
             # AlbumentationsWrapper(A.MotionBlur(blur_limit=13, p=0.8)),
             # AlbumentationsWrapper(A.Blur(blur_limit=13, p=0.8)),
             # AlbumentationsWrapper(A.MedianBlur(blur_limit=13, p=0.8)),
@@ -34,26 +33,12 @@ dataloader.train = L(build_detection_train_loader)(
             # AlbumentationsWrapper(A.CLAHE(p=0.3)),
             # AlbumentationsWrapper(A.RandomBrightnessContrast(p=0.01)),
             # AlbumentationsWrapper(A.ImageCompression(quality_lower=75, p=0.5))
-=======
-            # AlbumentationsWrapper(A.MotionBlur(blur_limit=13, p=0.2)),
-            # # AlbumentationsWrapper(A.Blur(blur_limit=13, p=0.8)),
-            # # AlbumentationsWrapper(A.MedianBlur(blur_limit=13, p=0.8)),
-            # AlbumentationsWrapper(A.ISONoise(color_shift=(0.01, 0.05), intensity=(0.1, 0.5), always_apply=False, p=0.1)),
-            # AlbumentationsWrapper(A.ToGray(p=0.01)),
-            # AlbumentationsWrapper(A.CLAHE(p=0.3)),
-            # AlbumentationsWrapper(A.RandomBrightnessContrast(p=0.01)),
-            # AlbumentationsWrapper(A.ImageCompression(quality_lower=75, p=0.2))
->>>>>>> Stashed changes
         ],
         image_format="BGR",
         use_instance_mask=True,
     ),
     total_batch_size=16,
-<<<<<<< Updated upstream
     num_workers=8,
-=======
-    num_workers=20,
->>>>>>> Stashed changes
 )
 
 dataloader.test = L(build_detection_test_loader)(
