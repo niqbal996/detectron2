@@ -14,6 +14,7 @@ in the config file and implement a new train_net.py to handle them.
 """
 import logging
 import warnings
+import os
 warnings.filterwarnings("ignore", category=UserWarning)
 import torch
 from detectron2.checkpoint import DetectionCheckpointer
@@ -123,10 +124,10 @@ def do_train(args, cfg):
             ),
             hooks.BestCheckpointer(eval_period=cfg.train.eval_period, checkpointer=checkpointer, 
                                    val_metric='bbox/AP50', mode='max', 
-                                   file_prefix='model_best_mAP50')
-            # hooks.TorchProfiler(
-            #  lambda trainer: 10 < trainer.iter < 20, cfg.train.output_dir
-            # )
+                                   file_prefix='model_best_mAP50'),
+            hooks.BestCheckpointer(eval_period=cfg.train.eval_period, checkpointer=checkpointer, 
+                                   val_metric='validation_loss', mode='min', 
+                                   file_prefix='model_best_val_loss')
             if comm.is_main_process()
             else None,
         ]
@@ -144,12 +145,19 @@ def do_train(args, cfg):
 def register_dataset():
     from detectron2.data.datasets import register_coco_instances
 
+    # register_coco_instances("maize_syn_v2_train", {},
+    #                         "/netscratch/naeem/maize_syn_v3/instances_train_2022.json",
+    #                         "/netscratch/naeem/maize_syn_v3/data")
+    # register_coco_instances("maize_real_v2_val", {},
+    #                         "/netscratch/naeem/maize_real_all_days/coco_annotations/all_data.json",
+    #                         "/netscratch/naeem/maize_real_all_days/data")
+    
     register_coco_instances("maize_syn_v2_train", {},
-                            "/netscratch/naeem/maize_syn_v3/instances_train_2022.json",
-                            "/netscratch/naeem/maize_syn_v3/data")
+                            "/home/niqbal/datasets/maize_syn_v2/instances_train_2022_2.json",
+                            "/home/niqbal/datasets/maize_syn_v2/camera_main_camera/rect")
     register_coco_instances("maize_real_v2_val", {},
-                            "/netscratch/naeem/maize_real_all_days/coco_annotations/all_data.json",
-                            "/netscratch/naeem/maize_real_all_days/data")
+                            "/home/niqbal/datasets/GIL_dataset/all_days/coco_annotations/all_data.json",
+                            "/home/niqbal/datasets/GIL_dataset/all_days/data")
 
 
 def main(args):
@@ -162,10 +170,18 @@ def main(args):
         model = instantiate(cfg.model)
         model.to(cfg.train.device)
         model = create_ddp_model(model)
-        DetectionCheckpointer(model).load(cfg.train.init_checkpoint)
+        DetectionCheckpointer(model).load(os.path.join(cfg.train.output_dir, 'model_best_mAP50.pth'))
         print(do_test(cfg, model))
     else:
         do_train(args, cfg)
+        # Do last evaluation with the best model
+        model = instantiate(cfg.model)
+        model.to(cfg.train.device)
+        model = create_ddp_model(model)
+        # Load best model saved in the checkpointer directory
+        DetectionCheckpointer(model).load(os.path.join(cfg.train.output_dir, 'model_best_mAP50.pth'))
+        # Do evaluation
+        print(do_test(cfg, model))
 
 
 if __name__ == "__main__":
