@@ -15,6 +15,7 @@ in the config file and implement a new train_net.py to handle them.
 import logging
 import warnings
 import os
+import multiprocessing as mp
 warnings.filterwarnings("ignore", category=UserWarning)
 import torch
 from detectron2.checkpoint import DetectionCheckpointer
@@ -115,19 +116,11 @@ def do_train(args, cfg):
             if comm.is_main_process()
             else None,
             hooks.EvalHook(cfg.train.eval_period, lambda: do_test(cfg, model)),
-            hooks.LossEvalHook(cfg.train.eval_period,  # TODO Set = 1000 after debugging
-                         model, 
-                         val_loader),
-            hooks.PeriodicWriter(
-                default_writers(cfg.train.output_dir, cfg.train.max_iter),
-                period=cfg.train.log_period,
-            ),
+            hooks.LossEvalHook(cfg.train.eval_period, model, val_loader),
+            hooks.PeriodicWriter(default_writers(cfg.train.output_dir, cfg.train.max_iter), period=cfg.train.log_period),
             hooks.BestCheckpointer(eval_period=cfg.train.eval_period, checkpointer=checkpointer, 
                                    val_metric='bbox/AP50', mode='max', 
-                                   file_prefix='model_best_mAP50'),
-            hooks.BestCheckpointer(eval_period=cfg.train.eval_period, checkpointer=checkpointer, 
-                                   val_metric='validation_loss', mode='min', 
-                                   file_prefix='model_best_val_loss')
+                                   file_prefix='model_best_mAP50')
             if comm.is_main_process()
             else None,
         ]
@@ -145,24 +138,28 @@ def do_train(args, cfg):
 def register_dataset():
     from detectron2.data.datasets import register_coco_instances
 
-    # register_coco_instances("maize_syn_v2_train", {},
-    #                         "/netscratch/naeem/maize_syn_v3/instances_train_2022.json",
-    #                         "/netscratch/naeem/maize_syn_v3/data")
-    # register_coco_instances("maize_real_v2_val", {},
-    #                         "/netscratch/naeem/maize_real_all_days/coco_annotations/all_data.json",
-    #                         "/netscratch/naeem/maize_real_all_days/data")
-    
     register_coco_instances("maize_syn_v2_train", {},
-                            "/home/niqbal/datasets/maize_syn_v2/instances_train_2022_2.json",
-                            "/home/niqbal/datasets/maize_syn_v2/camera_main_camera/rect")
+                            "/netscratch/naeem/maize_syn_v3/instances_train_2022.json",
+                            "/netscratch/naeem/maize_syn_v3/data_2")
     register_coco_instances("maize_real_v2_val", {},
-                            "/home/niqbal/datasets/GIL_dataset/all_days/coco_annotations/all_data.json",
-                            "/home/niqbal/datasets/GIL_dataset/all_days/data")
+                            "/netscratch/naeem/maize_real_all_days/coco_annotations/all_data.json",
+                            "/netscratch/naeem/maize_real_all_days/data")
+    
+    # register_coco_instances("maize_syn_v2_train", {},
+    #                         "/home/niqbal/datasets/maize_syn_v2/instances_train_2022_2.json",
+    #                         "/home/niqbal/datasets/maize_syn_v2/camera_main_camera/rect")
+    # register_coco_instances("maize_real_v2_val", {},
+    #                         "/home/niqbal/datasets/GIL_dataset/all_days/coco_annotations/all_data.json",
+    #                         "/home/niqbal/datasets/GIL_dataset/all_days/data")
 
 
 def main(args):
     cfg = LazyConfig.load(args.config_file) 
     cfg = LazyConfig.apply_overrides(cfg, args.opts)
+    max_workers = mp.cpu_count()
+    print('[INFO] Total number of workers available: {}'.format(max_workers))
+    idle = int(max_workers - cfg.dataloader.train.total_batch_size)
+    print('[INFO] Idle workers available: {}'.format(idle))
     default_setup(cfg, args)
     register_dataset()
 
