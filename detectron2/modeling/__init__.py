@@ -21,8 +21,8 @@ from .meta_arch import (
     META_ARCH_REGISTRY,
     SEM_SEG_HEADS_REGISTRY,
     GeneralizedRCNN,
+    GeneralizedRCNNDA,
     PanopticFPN,
-    ProposalNetwork,
     RetinaNet,
     SemanticSegmentor,
     build_model,
@@ -46,11 +46,22 @@ from .roi_heads import (
     BaseMaskRCNNHead,
     BaseKeypointRCNNHead,
     FastRCNNOutputLayers,
+    
     build_box_head,
     build_keypoint_head,
     build_mask_head,
     build_roi_heads,
 )
+
+# from .da_heads import (
+#     DA_HEAD_REGISTRY,
+#     DA_LOSS_REGISTRY,
+#     DomainAdaptationModule, 
+#     DAImgHead,
+#     DAInsHead, 
+#     DALossComputation,
+# )
+
 from .test_time_augmentation import DatasetMapperTTA, GeneralizedRCNNWithTTA
 from .mmdet_wrapper import MMDetBackbone, MMDetDetector
 

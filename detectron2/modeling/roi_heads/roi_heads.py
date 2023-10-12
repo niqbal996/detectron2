@@ -17,7 +17,6 @@ from ..matcher import Matcher
 from ..poolers import ROIPooler
 from ..proposal_generator.proposal_utils import add_ground_truth_to_proposals
 from ..sampling import subsample_labels
-from .box_head import build_box_head
 from .fast_rcnn import FastRCNNOutputLayers
 from .keypoint_head import build_keypoint_head
 from .mask_head import build_mask_head
@@ -298,9 +297,106 @@ class ROIHeads(torch.nn.Module):
         storage = get_event_storage()
         storage.put_scalar("roi_head/num_fg_samples", np.mean(num_fg_samples))
         storage.put_scalar("roi_head/num_bg_samples", np.mean(num_bg_samples))
+        # Optional! Add domain label for SA-DA-Faster RCNN
+        # This assumes first sample i.e. proposals_with_gt[0] is always source domain and second one is target domain.
+        domain_label = torch.ones_like(proposals_with_gt[0]._fields['gt_classes'], dtype=torch.bool)
+        proposals_with_gt[0]._fields['domain_labels'] = domain_label 
+        domain_label = torch.zeros_like(proposals_with_gt[1]._fields['gt_classes'], dtype=torch.bool)
+        proposals_with_gt[1]._fields['domain_labels'] = domain_label
 
         return proposals_with_gt
 
+    @torch.no_grad()
+    def label_and_sample_proposals_da(
+        self, proposals: List[Instances], targets: List[Instances]
+    ) -> List[Instances]:
+        """
+        Prepare some proposals to be used to train the ROI heads.
+        It performs box matching between `proposals` and `targets`, and assigns
+        training labels to the proposals.
+        It returns ``self.batch_size_per_image`` random samples from proposals and groundtruth
+        boxes, with a fraction of positives that is no larger than
+        ``self.positive_fraction``.
+
+        Args:
+            See :meth:`ROIHeads.forward`
+
+        Returns:
+            list[Instances]:
+                length `N` list of `Instances`s containing the proposals
+                sampled for training. Each `Instances` has the following fields:
+
+                - proposal_boxes: the proposal boxes
+                - gt_boxes: the ground-truth box that the proposal is assigned to
+                  (this is only meaningful if the proposal has a label > 0; if label = 0
+                  then the ground-truth box is random)
+
+                Other fields such as "gt_classes", "gt_masks", that's included in `targets`.
+        """
+        # Augment proposals with ground-truth boxes.
+        # In the case of learned proposals (e.g., RPN), when training starts
+        # the proposals will be low quality due to random initialization.
+        # It's possible that none of these initial
+        # proposals have high enough overlap with the gt objects to be used
+        # as positive examples for the second stage components (box head,
+        # cls head, mask head). Adding the gt boxes to the set of proposals
+        # ensures that the second stage components will have some positive
+        # examples from the start of training. For RPN, this augmentation improves
+        # convergence and empirically improves box AP on COCO by about 0.5
+        # points (under one tested configuration).
+        if self.proposal_append_gt:
+            proposals = add_ground_truth_to_proposals(targets, proposals)
+
+        proposals_with_gt = []
+
+        num_fg_samples = []
+        num_bg_samples = []
+        for proposals_per_image, targets_per_image in zip(proposals, targets):
+            has_gt = len(targets_per_image) > 0
+            match_quality_matrix = pairwise_iou(
+                targets_per_image.gt_boxes, proposals_per_image.proposal_boxes
+            )
+            matched_idxs, matched_labels = self.proposal_matcher(match_quality_matrix)
+            sampled_idxs, gt_classes = self._sample_proposals(
+                matched_idxs, matched_labels, targets_per_image.gt_classes
+            )
+
+            # Set target attributes of the sampled proposals:
+            proposals_per_image = proposals_per_image[sampled_idxs]
+            proposals_per_image.gt_classes = gt_classes
+
+            if has_gt:
+                sampled_targets = matched_idxs[sampled_idxs]
+                # We index all the attributes of targets that start with "gt_"
+                # and have not been added to proposals yet (="gt_classes").
+                # NOTE: here the indexing waste some compute, because heads
+                # like masks, keypoints, etc, will filter the proposals again,
+                # (by foreground/background, or number of keypoints in the image, etc)
+                # so we essentially index the data twice.
+                for (trg_name, trg_value) in targets_per_image.get_fields().items():
+                    if trg_name.startswith("gt_") and not proposals_per_image.has(trg_name):
+                        proposals_per_image.set(trg_name, trg_value[sampled_targets])
+            # If no GT is given in the image, we don't know what a dummy gt value can be.
+            # Therefore the returned proposals won't have any gt_* fields, except for a
+            # gt_classes full of background label.
+
+            num_bg_samples.append((gt_classes == self.num_classes).sum().item())
+            num_fg_samples.append(gt_classes.numel() - num_bg_samples[-1])
+            proposals_with_gt.append(proposals_per_image)
+
+        # Log the number of fg/bg samples that are selected for training ROI heads
+        storage = get_event_storage()
+        storage.put_scalar("roi_head/num_fg_samples", np.mean(num_fg_samples))
+        storage.put_scalar("roi_head/num_bg_samples", np.mean(num_bg_samples))
+        # Optional! Add domain label for SA-DA-Faster RCNN
+        # This assumes first sample is always source domain and second one is target domain.
+        domain_label = torch.ones_like(proposals_with_gt[0]._fields['gt_classes'], dtype=torch.uint8)
+        proposals_with_gt[0]._fields['domain_labels'] = domain_label 
+        domain_label = torch.zeros_like(proposals_with_gt[0]._fields['gt_classes'], dtype=torch.uint8)
+        proposals_with_gt[0]._fields['domain_labels'] = domain_label
+
+        return proposals_with_gt
+    
     def forward(
         self,
         images: ImageList,

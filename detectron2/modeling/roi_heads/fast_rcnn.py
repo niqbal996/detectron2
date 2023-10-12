@@ -342,13 +342,15 @@ class FastRCNNOutputLayers(nn.Module):
             loss_cls = self.sigmoid_cross_entropy_loss(scores, gt_classes)
         else:
             loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
-
+        domain_mask = cat([proposal._fields["domain_labels"] for proposal in proposals], dim=0)
         losses = {
             "loss_cls": loss_cls,
             "loss_box_reg": self.box_reg_loss(
                 proposal_boxes, gt_boxes, proposal_deltas, gt_classes
             ),
+            "domain_mask": domain_mask,
         }
+        # do weight scaling before passing it to the optimizer
         return {k: v * self.loss_weight.get(k, 1.0) for k, v in losses.items()}
 
     # Implementation from https://github.com/xingyizhou/CenterNet2/blob/master/projects/CenterNet2/centernet/modeling/roi_heads/fed_loss.py  # noqa
