@@ -28,6 +28,7 @@ wheels/
 *.npy
 *.ts
 model_ts*.txt
+cocoapi/
 
 # ipython/jupyter notebooks
 *.ipynb
