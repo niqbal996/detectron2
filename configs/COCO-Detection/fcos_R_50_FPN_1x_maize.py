@@ -8,7 +8,7 @@ from ..common.models.fcos import model
 from ..common.train import train
 
 dataloader.train.mapper.use_instance_mask = False
-optimizer.lr = 1e-4
+optimizer.lr = 1e-3
 
 model.backbone.bottom_up.freeze_at = 2
 model.num_classes = 2
@@ -18,10 +18,10 @@ model.num_classes = 2
 # dataloader.test.num_workers = 40
 
 
-dataloader.train.total_batch_size = 28  # 28 on 40GB and 80 on 80 GB
-dataloader.train.num_workers = 28
-dataloader.test.batch_size = 20
-dataloader.test.num_workers = 20
+dataloader.train.total_batch_size = 4  # 28 on 40GB and 80 on 80 GB
+dataloader.train.num_workers = 4
+dataloader.test.batch_size = 8
+dataloader.test.num_workers = 8
 
 train.output_dir = "/netscratch/naeem/fcos_pretrained_frozen_synthetic_1e-4"
 train.init_checkpoint = "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
@@ -29,17 +29,21 @@ train.max_iter = 15000
 train.eval_period = 200
 train.log_period = 10
 train.checkpointer = dict(period=200, max_to_keep=10)
+def register_dataset():
+    from detectron2.data.datasets import register_coco_instances
 
-register_coco_instances("maize_syn_v2_train", {},
-                        "/netscratch/naeem/maize_syn_v3/instances_train_2022.json",
-                        "/netscratch/naeem/maize_syn_v3/data_2")
-register_coco_instances("maize_real_v2_val", {},
-                        "/netscratch/naeem/maize_real_all_days/coco_annotations/all_data.json",
-                        "/netscratch/naeem/maize_real_all_days/data")
+    register_coco_instances("maize_syn_v3_train", {},
+                            "/mnt/d/datasets/Corn_syn_dataset/maize_syn_v3/instances_train_2022.json",
+                            "/mnt/d/datasets/Corn_syn_dataset/maize_syn_v3/data_2")
+    register_coco_instances("maize_real_v3_val", {},
+                            "/mnt/d/datasets/Corn_syn_dataset/2022_GIL_Paper_Dataset_V2/coco_anns/instances_val_2022.json",
+                            "/mnt/d/datasets/Corn_syn_dataset/GIL_dataset/all_days/data")
+    
+    register_coco_instances("pheno_train", {},
+                            "/mnt/d/datasets/PhenoBench/coco_anns/plants_panoptic_train.json",
+                            "/mnt/d/datasets/PhenoBench/train/images")
+    register_coco_instances("pheno_val", {},
+                            "/mnt/d/datasets/PhenoBench/coco_anns/plants_panoptic_val.json",
+                            "/mnt/d/datasets/PhenoBench/val/images")
 
-# register_coco_instances("maize_syn_v2_train", {},
-#                         "/home/niqbal/datasets/maize_syn_v2/instances_train_2022_2.json",
-#                         "/home/niqbal/datasets/maize_syn_v2/camera_main_camera/rect")
-# register_coco_instances("maize_real_v2_val", {},
-#                         "/home/niqbal/datasets/GIL_dataset/all_days/coco_annotations/all_data.json",
-#                         "/home/niqbal/datasets/GIL_dataset/all_days/data")
+register_dataset()
