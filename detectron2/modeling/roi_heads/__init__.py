@@ -20,6 +20,23 @@ from .roi_heads import (
     build_roi_heads,
     select_foreground_proposals,
 )
+
+from .da_roi_heads import (
+    DA_HEADS_REGISTRY,
+    DaROIHeads,
+)
+# from .roi_box_feature_extractors import (
+#     ROI_BOX_FEATURE_EXTRACTOR_REGISTRY,
+#     FPN2MLPFeatureExtractor,
+# )
+
+from .da_head import (
+    DAImgHead,
+    DAInsHead,
+    DomainAdaptationModule,
+)
+
+from .loss import DALossComputation
 from .cascade_rcnn import CascadeROIHeads
 from .rotated_fast_rcnn import RROIHeads
 from .fast_rcnn import FastRCNNOutputLayers

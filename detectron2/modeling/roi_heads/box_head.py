@@ -9,7 +9,7 @@ from detectron2.config import configurable
 from detectron2.layers import Conv2d, ShapeSpec, get_norm
 from detectron2.utils.registry import Registry
 
-__all__ = ["FastRCNNConvFCHead", "build_box_head", "ROI_BOX_HEAD_REGISTRY"]
+__all__ = ["FastRCNNConvFCHead", "build_box_head", "FPNPredictor", "ROI_BOX_HEAD_REGISTRY"]
 
 ROI_BOX_HEAD_REGISTRY = Registry("ROI_BOX_HEAD")
 ROI_BOX_HEAD_REGISTRY.__doc__ = """
@@ -109,6 +109,29 @@ class FastRCNNConvFCHead(nn.Sequential):
         else:
             return ShapeSpec(channels=o[0], height=o[1], width=o[2])
 
+@ROI_BOX_HEAD_REGISTRY.register()
+class FPNPredictor(nn.Module):
+    def __init__(self, 
+                 num_classes=2,
+                 representation_size=7 # TODO Fetch this from MLP_HEAD_DIM
+                 ):
+        super(FPNPredictor, self).__init__()
+
+        self.cls_score = nn.Linear(representation_size, num_classes)
+        # num_bbox_reg_classes = 2 if cfg.MODEL.CLS_AGNOSTIC_BBOX_REG else num_classes
+        num_bbox_reg_classes = 2
+        self.bbox_pred = nn.Linear(representation_size, num_bbox_reg_classes * 4)
+
+        nn.init.normal_(self.cls_score.weight, std=0.01)
+        nn.init.normal_(self.bbox_pred.weight, std=0.001)
+        for l in [self.cls_score, self.bbox_pred]:
+            nn.init.constant_(l.bias, 0)
+
+    def forward(self, x):
+        scores = self.cls_score(x)
+        bbox_deltas = self.bbox_pred(x)
+
+        return scores, bbox_deltas
 
 def build_box_head(cfg, input_shape):
     """

@@ -6,6 +6,8 @@ from .nms import batched_nms, batched_nms_rotated, nms, nms_rotated
 from .roi_align import ROIAlign, roi_align
 from .roi_align_rotated import ROIAlignRotated, roi_align_rotated
 from .shape_spec import ShapeSpec
+from .gradient_scalar_layer import GradientScalarLayer
+from .consistency_loss import consistency_loss
 from .wrappers import (
     BatchNorm2d,
     Conv2d,

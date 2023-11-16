@@ -16,7 +16,11 @@ import torchvision
 dataloader = OmegaConf.create()
 
 dataloader.train = L(build_detection_train_loader)(
+<<<<<<< HEAD
     dataset=L(get_detection_dataset_dicts)(names="syn_pheno_train"),
+=======
+    dataset=L(get_detection_dataset_dicts)(names="pheno_train"),
+>>>>>>> 322e8b5dccb5136a5024f1aeb65a6b1c3f94a1c6
     mapper=L(DatasetMapper)(
         is_train=True,
         augmentations=[

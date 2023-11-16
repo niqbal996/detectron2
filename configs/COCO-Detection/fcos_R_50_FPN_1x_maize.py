@@ -23,12 +23,14 @@ dataloader.train.num_workers = 4
 dataloader.test.batch_size = 8
 dataloader.test.num_workers = 8
 
-train.output_dir = "/netscratch/naeem/fcos_pretrained_frozen_synthetic_1e-4"
-train.init_checkpoint = "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
+train.output_dir = "/mnt/d/trainers/synthetic_style_transfer/frcnn_experiment"
+# train.init_checkpoint = "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
+train.init_checkpoint = "/mnt/d/trainers/synthetic_style_transfer/fcos_pretrained_frozen_transformed_1e-4/model_best_mAP50.pth"
 train.max_iter = 15000
 train.eval_period = 200
 train.log_period = 10
 train.checkpointer = dict(period=200, max_to_keep=10)
+
 def register_dataset():
     from detectron2.data.datasets import register_coco_instances
 
