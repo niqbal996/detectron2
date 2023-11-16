@@ -26,11 +26,22 @@ del model.roi_heads.mask_in_features
 del model.roi_heads.mask_pooler
 del model.roi_heads.mask_head
 
-train.max_iter = 15000
+train.max_iter = 5000
 train.eval_period = 200
 train.log_period = 10
 train.checkpointer = dict(period=200, max_to_keep=10)
-train.output_dir = './output/'
+train.output_dir = '/netscratch/naeem/faster_rcnn_syn_AL_maize_random_sampler'
 
 train.init_checkpoint = "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
 # train.init_checkpoint = "/mnt/d/trainers/phenobench_exps/frcnn_baseline/model_best_mAP50.pth"
+
+def register_dataset():
+    from detectron2.data.datasets import register_coco_instances
+    register_coco_instances("maize_syn_v2_train", {},
+                            "/netscratch/naeem/maize_syn_v3/instances_train_2022.json",
+                            "/netscratch/naeem/maize_syn_v3/data_2")
+    register_coco_instances("maize_real_v2_val", {},
+                            "/netscratch/naeem/maize_real_all_days/coco_annotations/all_data.json",
+                            "/netscratch/naeem/maize_real_all_days/data")
+    
+register_dataset()

@@ -194,15 +194,15 @@ def do_AL(args, cfg):
         #         break
         # print('hold')
     
-def register_dataset():
-    from detectron2.data.datasets import register_coco_instances
+# def register_dataset():
+#     from detectron2.data.datasets import register_coco_instances
 
-    register_coco_instances("maize_syn_v2_train", {},
-                            "/mnt/d/datasets/Corn_syn_dataset/maize_syn_v3/instances_train_2022.json",
-                            "/mnt/d/datasets/Corn_syn_dataset/maize_syn_v3/data")
-    register_coco_instances("maize_real_v2_val", {},
-                            "/mnt/d/datasets/Corn_syn_dataset/2022_GIL_Paper_Dataset_V2/coco_anns/instances_val_2022.json",
-                            "/mnt/d/datasets/Corn_syn_dataset/GIL_dataset/all_days/data")
+#     register_coco_instances("maize_syn_v2_train", {},
+#                             "/mnt/d/datasets/Corn_syn_dataset/maize_syn_v3/instances_train_2022.json",
+#                             "/mnt/d/datasets/Corn_syn_dataset/maize_syn_v3/data")
+#     register_coco_instances("maize_real_v2_val", {},
+#                             "/mnt/d/datasets/Corn_syn_dataset/2022_GIL_Paper_Dataset_V2/coco_anns/instances_val_2022.json",
+#                             "/mnt/d/datasets/Corn_syn_dataset/GIL_dataset/all_days/data")
     
     # register_coco_instances("pheno_train", {},
     #                         "/mnt/d/datasets/PhenoBench/coco_anns/plants_panoptic_train.json",
@@ -227,7 +227,7 @@ def main(args):
     # idle = int(max_workers - cfg.dataloader.train.total_batch_size)
     # print('[INFO] Idle workers available: {}'.format(idle))
     default_setup(cfg, args)
-    register_dataset()
+    # register_dataset()
 
     if args.eval_only:
         model = instantiate(cfg.model)
