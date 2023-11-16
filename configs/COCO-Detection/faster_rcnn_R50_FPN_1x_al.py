@@ -33,3 +33,21 @@ train.checkpointer = dict(period=200, max_to_keep=10)
 train.output_dir = '/netscratch/naeem/frcnn_syn_maize_AL_random_sampler'
 
 train.init_checkpoint = "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
+
+def register_dataset():
+    from detectron2.data.datasets import register_coco_instances
+
+    register_coco_instances("maize_syn_v2_train", {},
+                            "/netscratch/naeem/maize_syn_v3/instances_train_2022.json",
+                            "/netscratch/naeem/maize_syn_v3/data_2")
+    register_coco_instances("maize_real_v2_val", {},
+                            "/netscratch/naeem/maize_real_all_days/coco_annotations/all_data.json",
+                            "/netscratch/naeem/maize_real_all_days/data")
+    # register_coco_instances("maize_syn_v2_train", {},
+    #                         "/mnt/d/datasets/Corn_syn_dataset/maize_syn_v3/instances_train_2022.json",
+    #                         "/mnt/d/datasets/Corn_syn_dataset/maize_syn_v3/data")
+    # register_coco_instances("maize_real_v2_val", {},
+    #                         "/mnt/d/datasets/Corn_syn_dataset/2022_GIL_Paper_Dataset_V2/coco_anns/instances_val_2022.json",
+    #                         "/mnt/d/datasets/Corn_syn_dataset/GIL_dataset/all_days/data")
+
+register_dataset()
