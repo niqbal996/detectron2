@@ -35,10 +35,10 @@ from detectron2.utils import comm
 logger = logging.getLogger("detectron2")
 
 
-def do_test(cfg, model):
-    if "evaluator" in cfg.dataloader:
+def do_test(cfg, model, al_iteration):
+    if "evaluator" in cfg.dataloader_dict[al_iteration]:
         ret = inference_on_dataset(
-            model, instantiate(cfg.dataloader.test), instantiate(cfg.dataloader.evaluator)
+            model, instantiate(cfg.dataloader_dict[al_iteration].test), instantiate(cfg.dataloader_dict[al_iteration].evaluator)
         )
         print_csv_format(ret)
         return ret
@@ -161,12 +161,12 @@ def do_AL(args, cfg):
                 hooks.PeriodicCheckpointer(checkpointer, **cfg.train.checkpointer)
                 if comm.is_main_process()
                 else None,
-                hooks.EvalHook(cfg.train.eval_period, lambda: do_test(cfg, model)),
+                hooks.EvalHook(cfg.train.eval_period, lambda: do_test(cfg, model, al_iteration)),
                 # hooks.LossEvalHook(cfg.train.eval_period, model, val_loader),
                 hooks.PeriodicWriter(default_writers(cfg.train.output_dir, cfg.train.max_iter), period=cfg.train.log_period),
                 hooks.BestCheckpointer(eval_period=cfg.train.eval_period, checkpointer=checkpointer, 
                                     val_metric='bbox/AP50', mode='max', 
-                                    file_prefix='model_best_mAP50')
+                                    file_prefix='model_best_mAP50_{}_percent'.format(al_iteration))
                 if comm.is_main_process()
                 else None,
             ]
@@ -186,8 +186,6 @@ def main(args):
     cfg = LazyConfig.apply_overrides(cfg, args.opts)
     max_workers = mp.cpu_count()
     print('[INFO] Total number of workers available: {}'.format(max_workers))
-    idle = int(max_workers - cfg.dataloader.train.total_batch_size)
-    print('[INFO] Idle workers available: {}'.format(idle))
     default_setup(cfg, args)
 
     if args.eval_only:
