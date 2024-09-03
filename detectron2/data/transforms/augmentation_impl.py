@@ -5,7 +5,6 @@ Implement many useful :class:`Augmentation`.
 """
 import numpy as np
 import sys
-from numpy import random
 from typing import Tuple
 import torch
 from fvcore.transforms.transform import (
@@ -19,11 +18,9 @@ from fvcore.transforms.transform import (
     VFlipTransform,
 )
 from PIL import Image
-
-from detectron2.structures import Boxes, pairwise_iou
-
+from fvcore import transforms as T
 from .augmentation import Augmentation, _transform_to_aug
-from .transform import ExtentTransform, ResizeTransform, RotationTransform
+from .transform import ExtentTransform, ResizeTransform, RotationTransform, AlbumentationsTransform
 
 __all__ = [
     "FixedSizeCrop",
@@ -40,8 +37,8 @@ __all__ = [
     "ResizeScale",
     "ResizeShortestEdge",
     "RandomCrop_CategoryAreaConstraint",
-    "RandomResize",
-    "MinIoURandomCrop",
+    "AlbumentationsWrapper",
+    "FFTtransform",
 ]
 
 
@@ -242,7 +239,7 @@ class ResizeScale(Augmentation):
         output_size = np.round(np.multiply(input_size, output_scale)).astype(int)
 
         return ResizeTransform(
-            input_size[0], input_size[1], int(output_size[0]), int(output_size[1]), self.interp
+            input_size[0], input_size[1], output_size[0], output_size[1], self.interp
         )
 
     def get_transform(self, image: np.ndarray) -> Transform:
@@ -312,19 +309,12 @@ class FixedSizeCrop(Augmentation):
     it returns the smaller image.
     """
 
-    def __init__(
-        self,
-        crop_size: Tuple[int],
-        pad: bool = True,
-        pad_value: float = 128.0,
-        seg_pad_value: int = 255,
-    ):
+    def __init__(self, crop_size: Tuple[int], pad: bool = True, pad_value: float = 128.0):
         """
         Args:
             crop_size: target image (height, width).
             pad: if True, will pad images smaller than `crop_size` up to `crop_size`
-            pad_value: the padding value to the image.
-            seg_pad_value: the padding value to the segmentation mask.
+            pad_value: the padding value.
         """
         super().__init__()
         self._init(locals())
@@ -353,14 +343,7 @@ class FixedSizeCrop(Augmentation):
         pad_size = np.maximum(pad_size, 0)
         original_size = np.minimum(input_size, output_size)
         return PadTransform(
-            0,
-            0,
-            pad_size[1],
-            pad_size[0],
-            original_size[1],
-            original_size[0],
-            self.pad_value,
-            self.seg_pad_value,
+            0, 0, pad_size[1], pad_size[0], original_size[1], original_size[0], self.pad_value
         )
 
     def get_transform(self, image: np.ndarray) -> TransformList:
@@ -632,105 +615,161 @@ class RandomLighting(Augmentation):
             src_image=self.eigen_vecs.dot(weights * self.eigen_vals), src_weight=1.0, dst_weight=1.0
         )
 
+class AlbumentationsWrapper(Augmentation):
+    """
+    Wrap an augmentor form the albumentations library: https://github.com/albu/albumentations.
+    Image, Bounding Box and Segmentation are supported.
+    Example:
+    .. code-block:: python
+        import albumentations as A
+        from detectron2.data import transforms as T
+        from detectron2.data.transforms.albumentations import AlbumentationsWrapper
 
-class RandomResize(Augmentation):
-    """Randomly resize image to a target size in shape_list"""
+        augs = T.AugmentationList([
+            AlbumentationsWrapper(A.RandomCrop(width=256, height=256)),
+            AlbumentationsWrapper(A.HorizontalFlip(p=1)),
+            AlbumentationsWrapper(A.RandomBrightnessContrast(p=1)),
+        ])  # type: T.Augmentation
 
-    def __init__(self, shape_list, interp=Image.BILINEAR):
-        """
-        Args:
-            shape_list: a list of shapes in (h, w)
-            interp: PIL interpolation method
-        """
-        self.shape_list = shape_list
-        self._init(locals())
+        # Transform XYXY_ABS -> XYXY_REL
+        h, w, _ = IMAGE.shape
+        bbox = np.array(BBOX_XYXY) / [w, h, w, h]
 
-    def get_transform(self, image):
-        shape_idx = np.random.randint(low=0, high=len(self.shape_list))
-        h, w = self.shape_list[shape_idx]
-        return ResizeTransform(image.shape[0], image.shape[1], h, w, self.interp)
+        # Define the augmentation input ("image" required, others optional):
+        input = T.AugInput(IMAGE, boxes=bbox, sem_seg=IMAGE_MASK)
 
+        # Apply the augmentation:
+        transform = augs(input)
+        image_transformed = input.image  # new image
+        sem_seg_transformed = input.sem_seg  # new semantic segmentation
+        bbox_transformed = input.boxes   # new bounding boxes
 
-class MinIoURandomCrop(Augmentation):
-    """Random crop the image & bboxes, the cropped patches have minimum IoU
-    requirement with original image & bboxes, the IoU threshold is randomly
-    selected from min_ious.
-
-    Args:
-        min_ious (tuple): minimum IoU threshold for all intersections with
-        bounding boxes
-        min_crop_size (float): minimum crop's size (i.e. h,w := a*h, a*w,
-        where a >= min_crop_size)
-        mode_trials: number of trials for sampling min_ious threshold
-        crop_trials: number of trials for sampling crop_size after cropping
+        # Transform XYXY_REL -> XYXY_ABS
+        h, w, _ = image_transformed.shape
+        bbox_transformed = bbox_transformed * [w, h, w, h]
     """
 
-    def __init__(
-        self,
-        min_ious=(0.1, 0.3, 0.5, 0.7, 0.9),
-        min_crop_size=0.3,
-        mode_trials=1000,
-        crop_trials=50,
-    ):
-        self.min_ious = min_ious
-        self.sample_mode = (1, *min_ious, 0)
-        self.min_crop_size = min_crop_size
-        self.mode_trials = mode_trials
-        self.crop_trials = crop_trials
-
-    def get_transform(self, image, boxes):
-        """Call function to crop images and bounding boxes with minimum IoU
-        constraint.
-
-        Args:
-            boxes: ground truth boxes in (x1, y1, x2, y2) format
+    def __init__(self, augmentor):
         """
-        if boxes is None:
+        Args:
+            augmentor (albumentations.BasicTransform):
+        """
+        # super(Albumentations, self).__init__() - using python > 3.7 no need to call rng
+        self._aug = augmentor
+
+    def get_transform(self, image):
+        do = self._rand_range() < self._aug.p
+        if do:
+            return AlbumentationsTransform(self._aug)
+        else:
             return NoOpTransform()
-        h, w, c = image.shape
-        for _ in range(self.mode_trials):
-            mode = random.choice(self.sample_mode)
-            self.mode = mode
-            if mode == 1:
-                return NoOpTransform()
 
-            min_iou = mode
-            for _ in range(self.crop_trials):
-                new_w = random.uniform(self.min_crop_size * w, w)
-                new_h = random.uniform(self.min_crop_size * h, h)
+class FFTtransform(Augmentation):
+    def __init__(self, beta=2, alpha=0.5, color_space='YCbCr', channels=-1):
+        super().__init__()
+        self.alpha = alpha
+        self.beta = beta
+        self.color_space = color_space
+        self.channels = channels
+        self.scale_window = beta
+        self.image2 = [
+            '/netscratch/naeem/phenobench/train/images/05-26_00158_P0034279.png',
+            '/netscratch/naeem/phenobench/train/images/05-15_00181_P0030949.png',
+            '/netscratch/naeem/phenobench/train/images/06-05_00133_P0037987.png',
+        ]
 
-                # h / w in [0.5, 2]
-                if new_h / new_w < 0.5 or new_h / new_w > 2:
-                    continue
+    def get_transform(self, image):
+        def transform(img):
+            if not isinstance(img, Image.Image):
+                img = Image.fromarray(img)
+            else:
+                img = img.convert(self.color_space)
+            f_transforms1 = self.fourier_analysis(img, self.color_space)
+            f_transforms2 = self.fourier_analysis(random.choice(self.image2), self.color_space)
+            
+            # Get dimensions
+            rows, cols = f_transforms1[0].shape
+            center_row, center_col = rows // 2, cols // 2
+            
+            # Create a window for low frequency
+            window = np.zeros((rows, cols), dtype=bool)
+            window[center_row-self.scale_window:center_row+self.scale_window, 
+                center_col-self.scale_window:center_col+self.scale_window] = True
+            
+            # Determine which channels to swap
+            channels_to_swap = range(len(f_transforms1)) if self.channels == -1 else [self.channels]
+            
+            # Swap low frequency magnitude components of the specified channel(s)
+            for ch in channels_to_swap:
+                magnitude1 = np.abs(f_transforms1[ch])
+                magnitude2 = np.abs(f_transforms2[ch])
+                phase1 = np.angle(f_transforms1[ch])
+                
+                temp1 = magnitude1[window].copy()
+                temp2 = magnitude2[window].copy()
+                temp1 = temp1 * (1 - self.alpha)
+                temp2 = temp2 * self.alpha
+                temp = temp1 + temp2
+                magnitude1[window] = temp 
+                
+                # Reconstruct the channel
+                f_transforms1[ch] = magnitude1 * np.exp(1j * phase1)
+            
+                # Inverse Fourier Transform
+                reconstructed_channels = []
+                for f_transform in f_transforms1:
+                    channel = np.real(ifft2(ifftshift(f_transform)))
+                    channel = np.clip(channel, 0, 255).astype(np.uint8)
+                    reconstructed_channels.append(channel)
+                
+                # Combine channels
+                reconstructed_image = np.stack(reconstructed_channels, axis=-1)
+                
+                # Convert back to original color space
+                reconstructed_image = Image.fromarray(reconstructed_image, color_space)
 
-                left = random.uniform(w - new_w)
-                top = random.uniform(h - new_h)
+                reconstructed_image = reconstructed_image.convert('RGB')
+                
+                return reconstructed_image.asarray()
+        
+        return T.Lambda(transform)
 
-                patch = np.array((int(left), int(top), int(left + new_w), int(top + new_h)))
-                # Line or point crop is not allowed
-                if patch[2] == patch[0] or patch[3] == patch[1]:
-                    continue
-                overlaps = pairwise_iou(
-                    Boxes(patch.reshape(-1, 4)), Boxes(boxes.reshape(-1, 4))
-                ).reshape(-1)
-                if len(overlaps) > 0 and overlaps.min() < min_iou:
-                    continue
+    def fourier_analysis(self, image, color_space):
+        """
+        Perform Fourier analysis on an image in the specified color space.
+        
+        Args:
+        image: Can be either a string (path to image file) or a PIL Image object.
+        color_space: String specifying the color space (e.g., 'RGB', 'YCbCr', 'HSV', etc.)
+        """
+        if isinstance(image, str):
+            image = Image.open(image)
+        
+        if not isinstance(image, Image.Image):
+            raise ValueError("Input must be either a file path or a PIL Image object")
+        
+        # Convert to specified color space
+        image = image.convert(color_space)
+        
+        # Convert image to numpy array
+        image_array = np.array(image)
+    
+        # Separate color channels
+        channels = [image_array[:,:,i] for i in range(image_array.shape[2])]
+    
+        # Perform Fourier Transform on each channel
+        f_transforms = []
+        for channel in channels:
+            f_transform = fftshift(fft2(channel))
+            f_transforms.append(f_transform)
+    
+        return f_transforms
 
-                # center of boxes should inside the crop img
-                # only adjust boxes and instance masks when the gt is not empty
-                if len(overlaps) > 0:
-                    # adjust boxes
-                    def is_center_of_bboxes_in_patch(boxes, patch):
-                        center = (boxes[:, :2] + boxes[:, 2:]) / 2
-                        mask = (
-                            (center[:, 0] > patch[0])
-                            * (center[:, 1] > patch[1])
-                            * (center[:, 0] < patch[2])
-                            * (center[:, 1] < patch[3])
-                        )
-                        return mask
+    # def apply_coords(self, coords):
+    #     return coords
 
-                    mask = is_center_of_bboxes_in_patch(boxes, patch)
-                    if not mask.any():
-                        continue
-                return CropTransform(int(left), int(top), int(new_w), int(new_h))
+    # def inverse(self):
+    #     return NoOpTransform()
+
+    # def apply_segmentation(self, segmentation):
+    #     return segmentation

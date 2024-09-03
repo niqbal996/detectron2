@@ -17,6 +17,7 @@ from fvcore.transforms.transform import (
     TransformList,
 )
 from PIL import Image
+from scipy.fft import fft2, fftshift
 
 try:
     import cv2  # noqa
@@ -30,6 +31,7 @@ __all__ = [
     "RotationTransform",
     "ColorTransform",
     "PILColorTransform",
+    "AlbumentationsTransform",
 ]
 
 
@@ -43,7 +45,7 @@ class ExtentTransform(Transform):
     See: https://pillow.readthedocs.io/en/latest/PIL.html#PIL.ImageTransform.ExtentTransform
     """
 
-    def __init__(self, src_rect, output_size, interp=Image.BILINEAR, fill=0):
+    def __init__(self, src_rect, output_size, interp=Image.LINEAR, fill=0):
         """
         Args:
             src_rect (x0, y0, x1, y1): src coordinates
@@ -349,3 +351,37 @@ ResizeTransform.register_type("rotated_box", Resize_rotated_box)
 
 # not necessary any more with latest fvcore
 NoOpTransform.register_type("rotated_box", lambda t, x: x)
+
+class AlbumentationsTransform(Transform):
+    def __init__(self, aug):
+        self.aug = aug
+        self.params = aug.get_params()
+
+    def apply_coords(self, coords: np.ndarray) -> np.ndarray:
+        return coords
+
+    def apply_image(self, image):
+        self.params = self.prepare_param(image)
+        return self.aug.apply(image, **self.params)
+
+    def apply_box(self, box: np.ndarray) -> np.ndarray:
+        try:
+            return np.array(self.aug.apply_to_bboxes(box.tolist(), **self.params))
+        except AttributeError:
+            return box
+
+    def apply_segmentation(self, segmentation: np.ndarray) -> np.ndarray:
+        try:
+            return self.aug.apply_to_mask(segmentation, **self.params)
+        except AttributeError:
+            return segmentation
+
+    def prepare_param(self, image):
+        params = self.aug.get_params()
+        if self.aug.targets_as_params:
+            targets_as_params = {"image": image}
+            params_dependent_on_targets = self.aug.get_params_dependent_on_targets(targets_as_params)
+            params.update(params_dependent_on_targets)
+        params = self.aug.update_params(params, **{"image": image})
+        return params
+
