@@ -5,25 +5,31 @@ import datetime
 import itertools
 import logging
 import math
+import torch
 import operator
 import os
 import tempfile
 import time
+import numpy as np
 import warnings
 from collections import Counter
-import torch
+from typing import List, Dict, Any
+
 from fvcore.common.checkpoint import Checkpointer
 from fvcore.common.checkpoint import PeriodicCheckpointer as _PeriodicCheckpointer
 from fvcore.common.param_scheduler import ParamScheduler
+from fvcore.common.param_scheduler import LinearParamScheduler
 from fvcore.common.timer import Timer
 from fvcore.nn.precise_bn import get_bn_modules, update_bn_stats
 
 import detectron2.utils.comm as comm
 from detectron2.evaluation.testing import flatten_results_dict
 from detectron2.solver import LRMultiplier
-from detectron2.solver import LRScheduler as _LRScheduler
+from detectron2.solver import LRScheduler
+from detectron2.solver.lr_scheduler import WarmupParamScheduler
 from detectron2.utils.events import EventStorage, EventWriter
 from detectron2.utils.file_io import PathManager
+from detectron2.utils.logger import log_every_n_seconds
 
 from .train_loop import HookBase
 
@@ -39,6 +45,8 @@ __all__ = [
     "PreciseBN",
     "TorchProfiler",
     "TorchMemoryStats",
+    "LossEvalHook",
+    "CompositeWarmupReduceLROnPlateauHook",
 ]
 
 
@@ -174,7 +182,7 @@ class PeriodicWriter(HookBase):
         self._period = period
 
     def after_step(self):
-        if (self.trainer.iter + 1) % self._period == 0 or (
+        if (self.trainer.iter) % self._period == 0 or (
             self.trainer.iter == self.trainer.max_iter - 1
         ):
             for writer in self._writers:
@@ -363,12 +371,12 @@ class LRScheduler(HookBase):
         return self._scheduler or self.trainer.scheduler
 
     def state_dict(self):
-        if isinstance(self.scheduler, _LRScheduler):
+        if isinstance(self.scheduler, torch.optim.lr_scheduler._LRScheduler):
             return self.scheduler.state_dict()
         return {}
 
     def load_state_dict(self, state_dict):
-        if isinstance(self.scheduler, _LRScheduler):
+        if isinstance(self.scheduler, torch.optim.lr_scheduler._LRScheduler):
             logger = logging.getLogger(__name__)
             logger.info("Loading scheduler from state_dict ...")
             self.scheduler.load_state_dict(state_dict)
@@ -688,3 +696,182 @@ class TorchMemoryStats(HookBase):
                     self._logger.info("\n" + mem_summary)
 
                 torch.cuda.reset_peak_memory_stats()
+
+
+class LossEvalHook(HookBase):
+    def __init__(self, eval_period, model, data_loader, warmup_iters=None):
+        self._model = model
+        self._period = eval_period
+        self._data_loader = data_loader
+        self.warmup_iters = warmup_iters
+    
+    def _do_loss_eval(self):
+        # Copying inference_on_dataset from evaluator.py
+        total = len(self._data_loader)
+        num_warmup = min(5, total - 1)
+            
+        start_time = time.perf_counter()
+        total_compute_time = 0
+        losses = []
+        for idx, inputs in enumerate(self._data_loader):            
+            if idx == num_warmup:
+                start_time = time.perf_counter()
+                total_compute_time = 0
+            start_compute_time = time.perf_counter()
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            total_compute_time += time.perf_counter() - start_compute_time
+            iters_after_start = idx + 1 - num_warmup * int(idx >= num_warmup)
+            seconds_per_img = total_compute_time / iters_after_start
+            if idx >= num_warmup * 2 or seconds_per_img > 5:
+                total_seconds_per_img = (time.perf_counter() - start_time) / iters_after_start
+                eta = datetime.timedelta(seconds=int(total_seconds_per_img * (total - idx - 1)))
+                log_every_n_seconds(
+                    logging.INFO,
+                    "Loss on Validation  done {}/{}. {:.4f} s / img. ETA={}".format(
+                        idx + 1, total, seconds_per_img, str(eta)
+                    ),
+                    n=5,
+                )
+            loss_batch = self._get_loss(inputs)
+            losses.append(loss_batch)
+        mean_loss = np.mean(losses)
+        self.trainer.storage.put_scalar('validation_loss', mean_loss)
+        comm.synchronize()
+
+        return losses
+            
+    def _get_loss(self, data):
+        # How loss is calculated on train_loop 
+        metrics_dict = self._model(data)
+        metrics_dict = {
+            k: v.detach().cpu().item() if isinstance(v, torch.Tensor) else float(v)
+            for k, v in metrics_dict.items()
+        }
+        total_losses_reduced = sum(loss for loss in metrics_dict.values())
+        return total_losses_reduced
+            
+    def after_step(self):
+        next_iter = self.trainer.iter + 1
+        is_final = next_iter == self.trainer.max_iter
+        if self.warmup_iters is not None:
+            if self.trainer.iter >= self.warmup_iters:
+                if is_final or (self._period > 0 and (next_iter-1) % self._period == 0):
+                    self._do_loss_eval()
+        # In case we do not want to have a
+        else:
+            if is_final or (self._period > 0 and next_iter % self._period == 0):
+                    self._do_loss_eval()
+        self.trainer.storage.put_scalars(timetest=12)
+
+
+class CompositeWarmupReduceLROnPlateauHook(HookBase):
+    def __init__(
+        self,
+        optimizer: torch.optim.Optimizer,
+        warmup_factor: float = 0.001,
+        warmup_iters: int = 1000,
+        warmup_method: str = "linear",
+        max_iters: int = 20000,
+        mode: str = "min",
+        factor: float = 0.1,
+        patience: int = 10,
+        threshold: float = 1e-4,
+        threshold_mode: str = "rel",
+        cooldown: int = 0,
+        min_lr: float = 0,
+        eps: float = 1e-8,
+        metric_name: str = "total_loss",
+    ):
+        self.optimizer = optimizer
+        self.warmup_factor = warmup_factor
+        self.warmup_iters = warmup_iters
+        self.warmup_method = warmup_method
+        self.max_iters = max_iters
+        self.mode = mode
+        self.factor = factor
+        self.patience = patience
+        self.threshold = threshold
+        self.threshold_mode = threshold_mode
+        self.cooldown = cooldown
+        self.min_lr = min_lr
+        self.eps = eps
+        self.metric_name = metric_name
+        self.warmup_scheduler = LinearParamScheduler(
+            start_value=1.0,
+            end_value=1.0,
+        )
+        self.lr_scheduler = LRMultiplier(
+            self.optimizer,
+            WarmupParamScheduler(
+                scheduler=self.warmup_scheduler,
+                warmup_length=self.warmup_iters / self.max_iters,   # this should be a less than one value. what fraction of max iters 
+                warmup_method=self.warmup_method,
+                warmup_factor=self.warmup_factor,
+            ),
+            max_iter=self.max_iters,
+        )
+        
+        self.plateau_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer,
+            mode=self.mode,
+            factor=self.factor,
+            patience=self.patience,
+            threshold=self.threshold,
+            threshold_mode=self.threshold_mode,
+            cooldown=self.cooldown,
+            min_lr=self.min_lr,
+            eps=self.eps,
+        )
+        self._best_param_group_id = LRScheduler.get_best_param_group_id(self.optimizer)
+        self.base_lrs = [group['lr'] for group in optimizer.param_groups]
+
+    def before_train(self):
+        pass
+        
+    def get_best_param_group_id(optimizer):
+        # NOTE: some heuristics on what LR to summarize
+        # summarize the param group with most parameters
+        largest_group = max(len(g["params"]) for g in optimizer.param_groups)
+
+        if largest_group == 1:
+            # If all groups have one parameter,
+            # then find the most common initial LR, and use it for summary
+            lr_count = Counter([g["lr"] for g in optimizer.param_groups])
+            lr = lr_count.most_common()[0][0]
+            for i, g in enumerate(optimizer.param_groups):
+                if g["lr"] == lr:
+                    return i
+        else:
+            for i, g in enumerate(optimizer.param_groups):
+                if len(g["params"]) == largest_group:
+                    return i
+
+    def before_step(self) -> None:
+        # Remove any LR scheduling from before_step
+        pass
+
+    def after_step(self) -> None:
+        # Need to update the trainer storage in order to log the learning rate
+        lr = self.optimizer.param_groups[self._best_param_group_id]["lr"]
+        self.trainer.storage.put_scalar("lr", lr, smoothing_hint=False)
+        if self.trainer.iter - 1 <= self.warmup_iters:
+            # self.lr_scheduler.step(self.trainer.iter)
+            self.lr_scheduler.step()
+        else:
+            metric_value = self.trainer.storage.latest()[self.metric_name][0]
+            # self.plateau_scheduler.step(metric_value)
+            self.plateau_scheduler.step(metric_value)
+
+
+    def state_dict(self) -> Dict[str, Any]:
+        return {
+            "base_lrs": self.base_lrs,
+            "lr_scheduler": self.lr_scheduler.state_dict(),
+            "plateau_scheduler": self.plateau_scheduler.state_dict(),
+        }
+
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        self.base_lrs = state_dict["base_lrs"]
+        self.lr_scheduler.load_state_dict(state_dict["lr_scheduler"])
+        self.plateau_scheduler.load_state_dict(state_dict["plateau_scheduler"])
