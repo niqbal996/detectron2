@@ -224,29 +224,57 @@ class GeneralizedRCNN(nn.Module):
         """
         Normalize, pad and batch the input images.
         """
-        images = [self._move_to_current_device(x["image"]) for x in batched_inputs]
-        images = [(x - self.pixel_mean) / self.pixel_std for x in images]
-        images = ImageList.from_tensors(
+        if isinstance(batched_inputs, list):
+            images = [self._move_to_current_device(x["image"]) for x in batched_inputs]
+            images = [(x - self.pixel_mean) / self.pixel_std for x in images]
+            images = ImageList.from_tensors(
             images,
             self.backbone.size_divisibility,
             padding_constraints=self.backbone.padding_constraints,
         )
+        elif isinstance(batched_inputs, torch.Tensor):
+            if len(batched_inputs.shape) == 3:
+                images = self._move_to_current_device(batched_inputs)
+                images = (images - self.pixel_mean) / self.pixel_std
+                images = ImageList.from_tensors(
+                                    [images],
+                                    self.backbone.size_divisibility,
+                                    padding_constraints=self.backbone.padding_constraints,
+                                )
+            elif len(batched_inputs.shape) == 4:
+                images = self._move_to_current_device(batched_inputs)
+                images = (images - self.pixel_mean) / self.pixel_std
+                images = ImageList.from_tensors(
+                                    [images[0]],
+                                    32,
+                                    padding_constraints={'square_size': 0},
+                                ) 
+        else:
+            print("Error: batched_inputs type is not supported.")
         return images
 
     @staticmethod
     def _postprocess(instances, batched_inputs: List[Dict[str, torch.Tensor]], image_sizes):
         """
         Rescale the output instances to the target size.
-        """
-        # note: private function; subject to changes
+        """         
         processed_results = []
-        for results_per_image, input_per_image, image_size in zip(
-            instances, batched_inputs, image_sizes
-        ):
-            height = input_per_image.get("height", image_size[0])
-            width = input_per_image.get("width", image_size[1])
-            r = detector_postprocess(results_per_image, height, width)
+        # note: private function; subject to changes
+        if isinstance(batched_inputs, torch.Tensor):
+            image_sizes = image_sizes[0]
+            height = image_sizes[0]
+            width = image_sizes[1]
+            instances = instances[0]
+            r = detector_postprocess(instances, height, width)
             processed_results.append({"instances": r})
+        else:
+            for results_per_image, input_per_image, image_size in zip(
+                instances, batched_inputs, image_sizes
+            ):
+                height = input_per_image.get("height", image_size[0])
+                width = input_per_image.get("width", image_size[1])
+                r = detector_postprocess(results_per_image, height, width)
+                processed_results.append({"instances": r})
         return processed_results
 
 
